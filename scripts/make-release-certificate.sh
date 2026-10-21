@@ -1,7 +1,7 @@
 #!/bin/bash
 # Creates the certificate that releases are signed with. Run it once for the project, not once per Mac:
 # like scripts/make-signing-identity.sh's, it's a self-signed code-signing certificate, but it goes into
-# the release workflow's secrets rather than a keychain. Every release signed with it has the same
+# the release environment's secrets rather than a keychain. Every release signed with it has the same
 # designated requirement, so macOS keeps the Full Disk Access people gave ADO Pulse when they update.
 #   scripts/make-release-certificate.sh [--replace] folder
 # Writes the certificate's SHA-1 to scripts/release-certificate.sha1, which releases are checked
@@ -72,7 +72,8 @@ SHA1="$(/usr/bin/openssl x509 -in "$WORK/certificate.pem" -noout -fingerprint -s
 cat <<EOF
 Created the "$NAME" certificate (SHA-1 $SHA1), valid for 10 years, and wrote its SHA-1 to $PIN.
 Next:
-1. Add two repository secrets (Settings › Secrets and variables › Actions › New repository secret):
+1. Add two secrets to the release environment (Settings › Environments › release › Add environment
+   secret), which only approved releases from v* tags can use:
    RELEASE_SIGNING_P12, with the contents of $OUT/RELEASE_SIGNING_P12.txt, and
    RELEASE_SIGNING_P12_PASSWORD, with the contents of $OUT/RELEASE_SIGNING_P12_PASSWORD.txt.
 2. Keep both somewhere safe, such as a password manager, then delete $OUT.

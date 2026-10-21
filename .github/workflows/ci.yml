@@ -44,7 +44,29 @@ jobs:
       - name: Package the app
         run: make package
 
-      # The release workflow builds on macos-26 too, so this is what a release would contain.
+      # Signs the package the way the release workflow does, with a throwaway certificate rather than
+      # the release one, which only releases can use.
+      - name: Make a throwaway signing certificate
+        if: matrix.os == 'macos-26'
+        run: ./scripts/make-release-certificate.sh --replace "$RUNNER_TEMP/certificate" >/dev/null
+
+      - name: Import it
+        if: matrix.os == 'macos-26'
+        run: |
+          RELEASE_SIGNING_P12="$(cat "$RUNNER_TEMP/certificate/RELEASE_SIGNING_P12.txt")" \
+          RELEASE_SIGNING_P12_PASSWORD="$(cat "$RUNNER_TEMP/certificate/RELEASE_SIGNING_P12_PASSWORD.txt")" \
+            ./scripts/import-signing-certificate.sh "$RUNNER_TEMP/signing.keychain-db"
+
+      - name: Sign the package
+        if: matrix.os == 'macos-26'
+        run: ./scripts/sign-package.sh build/release
+
+      - name: Remove the signing keychain
+        if: always() && matrix.os == 'macos-26'
+        run: security delete-keychain "$RUNNER_TEMP/signing.keychain-db" 2>/dev/null || true
+
+      # The release workflow builds on macos-26 too, so this is what a release would contain, apart from
+      # the certificate it's signed with.
       - name: Upload the package
         if: matrix.os == 'macos-26'
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2

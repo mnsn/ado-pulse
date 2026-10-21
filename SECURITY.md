@@ -60,3 +60,6 @@ codesign -d -r- "/Applications/ADO Pulse.app"
 
 prints a designated requirement that ends with `certificate leaf = H"…"`, the SHA-1 in
 [scripts/release-certificate.sha1](https://github.com/mnsn/ado-pulse/blob/main/scripts/release-certificate.sha1).
+The certificate's private key is a secret of the repository's `release` environment, not a
+repository secret, so only the release workflow's signing job can use it, for a `v*` tag, after a
+maintainer approves the release.

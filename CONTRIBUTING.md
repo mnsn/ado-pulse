@@ -117,7 +117,8 @@ log show --last 10m --info --predicate 'subsystem == "com.asaf.ADOPulse"' --styl
 
 - Keep each pull request focused, and describe the change users will see.
 - Run `make test` and `make demo-check` first. CI also runs them on macOS 15 and macOS 26, packages
-  the universal app, and runs it on macOS 15 on Apple silicon and Intel.
+  the universal app, signs it as a release would but with a throwaway certificate, and runs it on
+  macOS 15 on Apple silicon and Intel.
 - Update the README, or [How it works](docs/how-it-works.md), when behavior or settings change.
 - For UI changes, include before and after screenshots from `make screenshots`.
 
@@ -132,13 +133,18 @@ once:
 1. Run `scripts/make-release-certificate.sh ~/ado-pulse-release-certificate`. It creates the
    certificate, and writes its SHA-1 to `scripts/release-certificate.sha1`; every release is checked
    against it. Commit that file.
-2. Add the two files it wrote to that folder as repository secrets, named after them, in
-   **Settings › Secrets and variables › Actions**: `RELEASE_SIGNING_P12` and
-   `RELEASE_SIGNING_P12_PASSWORD`.
-3. Keep both somewhere safe, such as a password manager, then delete the folder.
+2. In **Settings › Environments**, create the `release` environment. Give it a required reviewer,
+   who approves each release, and under **Deployment branches and tags**, allow only tags that
+   match `v*`.
+3. Add the two files the script wrote to that folder as secrets of the `release` environment, named
+   after them: `RELEASE_SIGNING_P12` and `RELEASE_SIGNING_P12_PASSWORD`. Not as repository secrets:
+   any workflow on any branch can read those, and this key signs apps that keep the Full Disk Access
+   people gave ADO Pulse.
+4. Keep both somewhere safe, such as a password manager, then delete the folder.
 
-The certificate is valid for ten years. A new one makes everyone allow Full Disk Access again, so
-keep this one; the script refuses to replace it without `--replace`.
+GitHub Free has environments only in public repositories. The certificate is valid for ten years. A
+new one makes everyone allow Full Disk Access again, so keep this one; the script refuses to replace
+it without `--replace`.
 
 To release a version:
 
@@ -156,11 +162,12 @@ To release a version:
    ```
 
 The tag starts the [release workflow](.github/workflows/release.yml). Its first job checks the
-version, then builds, signs, checks and tests the universal app on macOS 26 (`scripts/package.sh`).
-The second job attests the zip's build provenance and publishes the release with `ADO-Pulse.zip`,
-its SHA-256 and the changelog section. It runs in the `release` environment: give that environment a
-required reviewer (**Settings › Environments**) to approve each release before it's published, and
-turn on private vulnerability reporting (**Settings › Security**) for [SECURITY.md](SECURITY.md).
+version, then builds, checks and tests the universal app on macOS 26 (`scripts/package.sh`), without
+the signing key. The second job runs in the `release` environment, so it waits for your approval.
+Then it signs the app with the release certificate and checks it (`scripts/sign-package.sh`),
+attests the zip's build provenance, and publishes the release with `ADO-Pulse.zip`, its SHA-256 and
+the changelog section. Turn on private vulnerability reporting (**Settings › Security**) for
+[SECURITY.md](SECURITY.md) too.
 
 The certificate isn't Apple's, and the app isn't notarized, which is why the README explains the
 Gatekeeper step. It doesn't update itself yet: users download each release.
