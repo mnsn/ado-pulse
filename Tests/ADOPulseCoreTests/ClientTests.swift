@@ -92,6 +92,21 @@ import Testing
         #expect(undated.expiresOn == t(30 * minute))
     }
 
+    @Test func readsWhoATokenIsFor() throws {
+        func jwt(_ claims: String) -> String {
+            let payload = Data(claims.utf8).base64EncodedString()
+                .replacingOccurrences(of: "+", with: "-").replacingOccurrences(of: "/", with: "_").replacingOccurrences(of: "=", with: "")
+            return "eyJhbGciOiJub25lIn0.\(payload).c2ln"
+        }
+        let token = jwt(#"{"tid":"T1","oid":"O-1","upn":"robin@contoso.com"}"#)
+        #expect(AccessToken.account(inJWT: token) == "t1/o-1")
+        let parsed = try AzureCLITokenProvider.parseToken(Data(#"{"accessToken": "\#(token)", "expires_on": 1792564306}"#.utf8), now: t(0))
+        #expect(parsed.account == "t1/o-1")
+        #expect(AccessToken.account(inJWT: jwt(#"{"sub":"S"}"#)) == "/s")
+        #expect(AccessToken.account(inJWT: "opaque") == nil)
+        #expect(AccessToken.account(inJWT: "a.b.c") == nil)
+    }
+
     @Test func rejectsOutputWithoutAToken() {
         #expect(throws: AuthError.failed("The Azure CLI returned no token.")) {
             try AzureCLITokenProvider.parseToken(Data("{}".utf8), now: t(0))

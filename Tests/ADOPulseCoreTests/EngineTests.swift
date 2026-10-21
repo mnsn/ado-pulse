@@ -376,6 +376,25 @@ import Testing
         #expect(classify(snapshot, now: now)[1]?.reason == .abandoned)
     }
 
+    @Test func signingInAsSomeoneElseStartsOver() async throws {
+        let server = StubServer()
+        let tokens = server.tokens
+        await tokens.signIn(as: "tenant/robin")
+        server.serveOrganization(mine: [Fixture.pullRequest(1)])
+        let engine = engine(server, tokens: tokens)
+        await engine.refreshNow()
+        #expect(await engine.currentSnapshot().records.map(\.id.number) == [1])
+
+        // Sam signs in to the Azure CLI: Azure DevOps knows them by another identity, with other pull requests.
+        let sam = People.sam.id
+        server.serveOrganization(me: sam, mine: [Fixture.pullRequest(2, author: People.sam)])
+        await tokens.signIn(as: "tenant/sam")
+        await engine.refreshNow()
+        let snapshot = await engine.currentSnapshot()
+        #expect(snapshot.records.map(\.id.number) == [2])
+        #expect(snapshot.records.allSatisfy { $0.me == sam })
+    }
+
     @Test func keepsLookingUpPullRequestsThatLeftTheList() async throws {
         let now = Date()
         let server = StubServer()

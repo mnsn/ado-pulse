@@ -4,10 +4,27 @@ import Foundation
 public struct AccessToken: Sendable, Equatable {
     public var value: String
     public var expiresOn: Date
+    /// Who it's for, when the token says: a different one means someone else signed in.
+    public var account: String?
 
-    public init(value: String, expiresOn: Date) {
+    public init(value: String, expiresOn: Date, account: String? = nil) {
         self.value = value
         self.expiresOn = expiresOn
+        self.account = account
+    }
+
+    /// The tenant and object ID in a Microsoft Entra token (a JWT), read without checking its signature: it
+    /// only tells one sign-in from another. Nil for a token that isn't a JWT.
+    public static func account(inJWT token: String) -> String? {
+        let parts = token.split(separator: ".", omittingEmptySubsequences: false)
+        guard parts.count == 3 else { return nil }
+        var payload = parts[1].replacingOccurrences(of: "-", with: "+").replacingOccurrences(of: "_", with: "/")
+        payload += String(repeating: "=", count: (4 - payload.count % 4) % 4)
+        guard let data = Data(base64Encoded: payload),
+              let claims = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
+        else { return nil }
+        let subject = (claims["oid"] as? String) ?? (claims["sub"] as? String)
+        return subject.map { "\(claims["tid"] as? String ?? "")/\($0)".lowercased() }
     }
 
     /// Valid for at least `margin` more seconds.
@@ -133,7 +150,7 @@ public actor AzureCLITokenProvider: AccessTokenProvider {
         let expiry = output.expires_on.map { Date(timeIntervalSince1970: $0) }
             ?? output.expiresOn.flatMap(parseLocalTime)
             ?? now.addingTimeInterval(30 * 60)
-        return AccessToken(value: output.accessToken, expiresOn: expiry)
+        return AccessToken(value: output.accessToken, expiresOn: expiry, account: AccessToken.account(inJWT: output.accessToken))
     }
 
     static func parseLocalTime(_ string: String) -> Date? {

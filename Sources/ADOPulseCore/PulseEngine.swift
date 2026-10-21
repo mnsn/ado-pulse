@@ -140,6 +140,8 @@ public actor PulseEngine {
 
     /// Organization → your identity ID there.
     private var identities: [String: String] = [:]
+    /// Whose sign-in the identities, lists and details are for.
+    private var account: String?
     private var userName: String?
     private var firstLoaded: [String: Date] = [:]
     private var active: [PRKey: Listed] = [:]
@@ -236,12 +238,19 @@ public actor PulseEngine {
         }
 
         // Signing in comes first: nothing works without a token, and a failure here says exactly what's wrong.
+        let token: AccessToken
         do {
-            _ = try await client.tokens.token()
+            token = try await client.tokens.token()
         } catch {
             problem = PulseProblem.from((error as? AuthError).map(ADOError.auth) ?? .auth(.failed(String(describing: error))))
             failures += 1
             return
+        }
+        // Someone else signed in: your identity in each organization, and everything read as the last one, is out
+        // of date.
+        if let signedIn = token.account {
+            if let account, account != signedIn { forgetAccount() }
+            account = signedIn
         }
 
         let startedAt = now()
@@ -358,6 +367,17 @@ public actor PulseEngine {
         } else {
             problem = nil
         }
+    }
+
+    private func forgetAccount() {
+        identities = [:]
+        userName = nil
+        firstLoaded = [:]
+        active = [:]
+        done = [:]
+        details = [:]
+        entries = [:]
+        vanished = [:]
     }
 
     /// Fetches details a few pull requests at a time. Returns the error if Azure DevOps asked to slow down.
