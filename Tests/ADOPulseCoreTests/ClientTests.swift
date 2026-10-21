@@ -208,6 +208,51 @@ import Testing
         #expect(result.status != 0)
         #expect(Date().timeIntervalSince(start) < 10)
     }
+
+    @Test(.timeLimit(.minutes(1)))
+    func endsAProgramThatIgnoresBeingAskedToStop() async throws {
+        let start = Date()
+        let result = try await ProcessRunner().run(
+            URL(fileURLWithPath: "/bin/sh"), arguments: ["-c", "trap '' TERM; sleep 30"], environment: nil, timeout: 0.3
+        )
+        #expect(result.status == SIGKILL)
+        #expect(Date().timeIntervalSince(start) < 5)
+    }
+
+    @Test(.timeLimit(.minutes(1)))
+    func doesntWaitForWhatTheProgramLeftRunning() async throws {
+        // The shell exits at once, but the sleep it started in the background keeps its output open.
+        let start = Date()
+        let result = try await ProcessRunner().run(
+            URL(fileURLWithPath: "/bin/sh"), arguments: ["-c", "sleep 30 & echo $!"], environment: nil, timeout: 20
+        )
+        #expect(result.status == 0)
+        #expect(Date().timeIntervalSince(start) < 3)
+        // And what it left running is ended.
+        let child = try #require(pid_t(String(decoding: result.stdout, as: UTF8.self).trimmingCharacters(in: .whitespacesAndNewlines)))
+        var ended = false
+        for _ in 0..<100 where !ended {
+            ended = kill(child, 0) != 0 && errno == ESRCH
+            if !ended { try await Task.sleep(for: .milliseconds(20)) }
+        }
+        #expect(ended)
+    }
+
+    @Test func collectsLargeOutput() async throws {
+        let result = try await ProcessRunner().run(
+            URL(fileURLWithPath: "/bin/sh"), arguments: ["-c", "head -c 1000000 /dev/zero; head -c 300000 /dev/zero >&2"],
+            environment: nil, timeout: 10
+        )
+        #expect(result.status == 0)
+        #expect(result.stdout.count == 1_000_000)
+        #expect(result.stderr.count == 300_000)
+    }
+
+    @Test func reportsAProgramThatCantRun() async {
+        await #expect(throws: (any Error).self) {
+            try await ProcessRunner().run(URL(fileURLWithPath: "/nonexistent/az"), arguments: [], environment: nil, timeout: 5)
+        }
+    }
 }
 
 /// A tiny lock-protected value for test bookkeeping.
