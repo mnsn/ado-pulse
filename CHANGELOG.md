@@ -6,6 +6,8 @@
   Teams, Slack, an email or any other app, it shows in Needs You, as "Dana sent this in Teams", until
   you open it, vote or comment, it closes, or a week passes. Right-click it to open the message. It
   reads Notification Center's database, so it needs Full Disk Access, and keeps only the links.
+- Releases are signed with the project's own certificate rather than ad hoc, so macOS keeps the
+  access you give ADO Pulse when you update it.
 
 ## 0.1.0 - 2026-10-21
 

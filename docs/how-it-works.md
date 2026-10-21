@@ -130,7 +130,9 @@ or a week passes. Links aren't announced: the app they came in already did.
 macOS protects that database, so ADO Pulse needs Full Disk Access, which it asks for when you turn the
 setting on, and macOS ties that access to the app's code signature. `make signing-identity` creates
 a self-signed certificate, and builds signed with it keep the same designated requirement, so access
-survives rebuilds. An ad-hoc signature changes with every build.
+survives rebuilds. An ad-hoc signature changes with every build. Releases are signed the same way,
+with the project's own certificate (see "Releasing" in [CONTRIBUTING.md](../CONTRIBUTING.md)), so
+access survives updates.
 
 ## Notifications
 

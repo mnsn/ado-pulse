@@ -28,8 +28,23 @@ jobs:
           xcode-select --print-path
           swift --version
 
+      # Every release is signed with the same certificate, so macOS keeps the Full Disk Access people
+      # gave ADO Pulse when they update. See "Releasing" in CONTRIBUTING.md.
+      - name: Import the signing certificate
+        env:
+          RELEASE_SIGNING_P12: ${{ secrets.RELEASE_SIGNING_P12 }}
+          RELEASE_SIGNING_P12_PASSWORD: ${{ secrets.RELEASE_SIGNING_P12_PASSWORD }}
+        run: ./scripts/import-signing-certificate.sh "$RUNNER_TEMP/signing.keychain-db"
+
       - name: Package the app
         run: ./scripts/package.sh "$GITHUB_REF_NAME"
+
+      - name: Remove the signing keychain
+        if: always()
+        run: security delete-keychain "$RUNNER_TEMP/signing.keychain-db" 2>/dev/null || true
+
+      - name: Check that it's signed with the release certificate
+        run: ./scripts/check-app.sh --universal --release "build/ADO Pulse.app"
 
       - name: Test
         run: make test

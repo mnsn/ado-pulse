@@ -173,8 +173,9 @@ open it from ADO Pulse, vote or comment on it, it closes, or a week goes by. Not
 keeps only the latest hundred or so notifications per app, so ADO Pulse remembers the links it finds
 (only the links, as described in [Privacy](#privacy)).
 
-macOS ties Full Disk Access to the app's signature. A copy you build yourself keeps it across builds
-once you've run `make signing-identity`; otherwise you have to allow each new build again.
+macOS ties Full Disk Access to the app's signature. Every release is signed with the same
+certificate, so updating keeps it. A copy you build yourself keeps it across builds once you've run
+`make signing-identity`; otherwise you have to allow each new build again.
 
 ### Why isn't a pull request assigned to my team shown?
 
@@ -191,8 +192,8 @@ which build failed. Click the pull request to see it.
 Notarization needs a paid Apple Developer Program membership, which this free project doesn't
 have. So macOS asks you to allow the app the first time you open it, as described in
 [Install](#install). Each release is built from its tagged source by
-[GitHub Actions](.github/workflows/release.yml), with an attestation you can
-[verify](SECURITY.md#verifying-a-download). You can also build it yourself.
+[GitHub Actions](.github/workflows/release.yml) and signed with the project's own certificate, with
+an attestation you can [verify](SECURITY.md#verifying-a-download). You can also build it yourself.
 
 ### How do I troubleshoot it?
 

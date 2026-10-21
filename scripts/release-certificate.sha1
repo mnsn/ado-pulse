@@ -1,0 +1,3 @@
+# The SHA-1 of the certificate that releases are signed with (scripts/make-release-certificate.sh).
+# Releases are checked against it. A new certificate makes everyone allow Full Disk Access again.
+1e10902bd49d476ba5d97f4be42d87781755f124

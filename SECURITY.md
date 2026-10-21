@@ -50,5 +50,13 @@ downloaded came from it, use the [GitHub CLI](https://cli.github.com):
 gh attestation verify ADO-Pulse.zip --repo mnsn/ado-pulse
 ```
 
-Each release also lists the zip's SHA-256, which `shasum -a 256 ADO-Pulse.zip` prints. The app is
-signed ad hoc and isn't notarized, so macOS can't tie it to this project; the attestation can.
+Each release also lists the zip's SHA-256, which `shasum -a 256 ADO-Pulse.zip` prints. The app isn't
+notarized, so macOS can't tie it to this project; the attestation can. It's signed with the project's
+own certificate, so you can also check the app itself:
+
+```sh
+codesign -d -r- "/Applications/ADO Pulse.app"
+```
+
+prints a designated requirement that ends with `certificate leaf = H"…"`, the SHA-1 in
+[scripts/release-certificate.sha1](https://github.com/mnsn/ado-pulse/blob/main/scripts/release-certificate.sha1).

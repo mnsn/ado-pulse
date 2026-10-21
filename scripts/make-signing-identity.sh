@@ -38,7 +38,8 @@ if security find-certificate -c "$NAME" "$KEYCHAIN" >/dev/null 2>&1; then
     exit 1
 fi
 
-# A leaf certificate for code signing only, valid for 10 years. Nothing needs to trust it: macOS
+# A leaf certificate for code signing only, valid for 10 years, made with macOS's own LibreSSL: `security
+# import` can't read the .p12 files that OpenSSL 3 writes by default. Nothing needs to trust it: macOS
 # matches the certificate itself against the app's designated requirement.
 cat > "$WORK/certificate.cnf" <<EOF
 [ req ]
@@ -53,10 +54,10 @@ keyUsage = critical, digitalSignature
 extendedKeyUsage = critical, codeSigning
 subjectKeyIdentifier = hash
 EOF
-openssl req -x509 -newkey rsa:3072 -sha256 -days 3650 -nodes -config "$WORK/certificate.cnf" \
+/usr/bin/openssl req -x509 -newkey rsa:3072 -sha256 -days 3650 -nodes -config "$WORK/certificate.cnf" \
     -keyout "$WORK/key.pem" -out "$WORK/certificate.pem" 2>/dev/null
-PASSWORD="$(openssl rand -hex 16)"
-openssl pkcs12 -export -name "$NAME" -inkey "$WORK/key.pem" -in "$WORK/certificate.pem" \
+PASSWORD="$(/usr/bin/openssl rand -hex 16)"
+/usr/bin/openssl pkcs12 -export -name "$NAME" -inkey "$WORK/key.pem" -in "$WORK/certificate.pem" \
     -passout "pass:$PASSWORD" -out "$WORK/identity.p12"
 
 # -T lets codesign use the private key. The key never leaves the keychain after this.

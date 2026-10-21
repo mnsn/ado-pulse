@@ -59,7 +59,7 @@ Sources/ADOPulseCore/   the engine; UI-free, and fully tested
 Sources/ADOPulse/       the AppKit/SwiftUI app: menu bar, panel, widget, settings, notifications,
                         on-device summaries, command line and renderer
 Tests/ADOPulseCoreTests/  Swift Testing suites, including the engine against a stub Azure DevOps
-scripts/                app bundling, checking and packaging, and the icon
+scripts/                app bundling, signing, checking and packaging, and the icon
 ```
 
 ## Debugging
@@ -125,6 +125,23 @@ log show --last 10m --info --predicate 'subsystem == "com.asaf.ADOPulse"' --styl
 
 Releases are built by GitHub Actions, not on a maintainer's Mac.
 
+Every release is signed with the project's own certificate, so macOS keeps the Full Disk Access
+people give ADO Pulse (for pull requests sent in chats) when they update. Before the first release,
+once:
+
+1. Run `scripts/make-release-certificate.sh ~/ado-pulse-release-certificate`. It creates the
+   certificate, and writes its SHA-1 to `scripts/release-certificate.sha1`; every release is checked
+   against it. Commit that file.
+2. Add the two files it wrote to that folder as repository secrets, named after them, in
+   **Settings › Secrets and variables › Actions**: `RELEASE_SIGNING_P12` and
+   `RELEASE_SIGNING_P12_PASSWORD`.
+3. Keep both somewhere safe, such as a password manager, then delete the folder.
+
+The certificate is valid for ten years. A new one makes everyone allow Full Disk Access again, so
+keep this one; the script refuses to replace it without `--replace`.
+
+To release a version:
+
 1. Set the new version as `CFBundleShortVersionString` in `Resources/Info.plist`, as three numbers
    such as `0.2.0`. The build sets `CFBundleVersion` to the same value. A release fails unless its
    version is higher than every earlier tag.
@@ -139,14 +156,14 @@ Releases are built by GitHub Actions, not on a maintainer's Mac.
    ```
 
 The tag starts the [release workflow](.github/workflows/release.yml). Its first job checks the
-version, then builds, checks and tests the universal app on macOS 26 (`scripts/package.sh`). The
-second job attests the zip's build provenance and publishes the release with `ADO-Pulse.zip`, its
-SHA-256 and the changelog section. It runs in the `release` environment: give that environment a
+version, then builds, signs, checks and tests the universal app on macOS 26 (`scripts/package.sh`).
+The second job attests the zip's build provenance and publishes the release with `ADO-Pulse.zip`,
+its SHA-256 and the changelog section. It runs in the `release` environment: give that environment a
 required reviewer (**Settings › Environments**) to approve each release before it's published, and
 turn on private vulnerability reporting (**Settings › Security**) for [SECURITY.md](SECURITY.md).
 
-The app is signed ad hoc and isn't notarized, which is why the README explains the Gatekeeper step.
-It doesn't update itself yet: users download each release.
+The certificate isn't Apple's, and the app isn't notarized, which is why the README explains the
+Gatekeeper step. It doesn't update itself yet: users download each release.
 
 ## License
 
