@@ -31,6 +31,7 @@ make app           # build "ADO Pulse.app" into ./build without installing
 make package       # build the universal app for a release, check it and zip it into build/release
 make install       # build the app, copy it to ~/Applications and launch it
 make icon          # regenerate Resources/AppIcon.icns
+make signing-identity  # once per Mac: a certificate to sign builds with, so Full Disk Access survives rebuilds
 ```
 
 [How it works](docs/how-it-works.md) explains where the data comes from and how a pull request's
@@ -51,6 +52,9 @@ Sources/ADOPulseCore/   the engine; UI-free, and fully tested
   Notifications         decides what's worth a notification
   Brief                 picks the brief's items and words the prompts for the on-device model
   OrganizationDiscovery finds your organizations
+  NotificationCenter    read-only access to Notification Center's database, and its records
+  ChatLinks             finds pull request links in notifications, and remembers them
+  ChatLinkMonitor       watches Notification Center for new links
   DemoData              made-up pull requests in every state
 Sources/ADOPulse/       the AppKit/SwiftUI app: menu bar, panel, widget, settings, notifications,
                         on-device summaries, command line and renderer
@@ -67,6 +71,7 @@ The app binary doubles as a command-line tool:
 .build/debug/ADOPulse --json            # the same as JSON, with counts
 .build/debug/ADOPulse --watch           # print changes as they happen
 .build/debug/ADOPulse --orgs            # your organizations, and the ones with pull requests
+.build/debug/ADOPulse --chats           # pull request links in Notification Center (Terminal needs Full Disk Access)
 .build/debug/ADOPulse --render <dir>    # draw the menu bar with the panel open, and each widget size, to PNGs (light and dark)
 ```
 
@@ -95,6 +100,9 @@ log show --last 10m --info --predicate 'subsystem == "com.asaf.ADOPulse"' --styl
 - **Never write to Azure DevOps.** Every request goes through `ADOClient`, which only sends GET
   requests without a body. Don't add another way to make requests, and test new requests against
   the stub server in the tests.
+- **Notification Center is read, never written.** Open its database read-only, keep reads short,
+  and keep only pull request links and who sent them where: never a message's text. Test with the
+  made-up database in the tests, or `ADO_PULSE_NOTIFICATIONS_DB` pointing at a copy.
 - **On-device summaries only.** Use `SystemLanguageModel.default`, never Private Cloud Compute or a
   cloud model: pull request titles and comments mustn't leave the Mac. Decide in code what matters,
   and give the model one item at a time.

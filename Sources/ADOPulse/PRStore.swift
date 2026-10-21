@@ -31,6 +31,12 @@ final class PRStore: ObservableObject {
     @Published private(set) var brief: [BriefItem] = []
     /// Notifications are on in ADO Pulse but turned off for it in System Settings.
     @Published private(set) var notificationsBlocked = false
+    /// Whether ADO Pulse can read Notification Center, for pull requests sent in chats; nil while that's off.
+    @Published private(set) var chatAccess: AccessStatus?
+    /// Why Notification Center couldn't be read, though ADO Pulse has access.
+    @Published private(set) var chatProblem: String?
+    /// Opens the window that explains Full Disk Access.
+    var showChatAccessSetup: (() -> Void)?
 
     let settings: AppSettings
     let summarizer: Summarizer
@@ -48,6 +54,9 @@ final class PRStore: ObservableObject {
     private var discoveryProblem: PulseProblem?
     private var ticker: Timer?
     private var monitor: NWPathMonitor?
+    private var chatMonitor: ChatLinkMonitor?
+    /// Set when you turn the feature on, so the setup window opens if access is missing.
+    private var setUpChatAccessWhenNeeded = false
     private var isOnline = true
     private var cancellables: Set<AnyCancellable> = []
 
@@ -118,6 +127,7 @@ final class PRStore: ObservableObject {
                 discoverOrganizations()
             }
             watchNetworkAndSleep()
+            updateChatMonitor()
         }
     }
 
@@ -169,6 +179,95 @@ final class PRStore: ObservableObject {
         settings.$notifications.dropFirst().filter { $0 }
             .sink { [weak self] _ in MainActor.assumeIsolated { self?.notifier?.requestAuthorization() } }
             .store(in: &cancellables)
+
+        settings.$chatLinksEnabled.dropFirst().removeDuplicates()
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] enabled in
+                MainActor.assumeIsolated {
+                    self?.setUpChatAccessWhenNeeded = enabled
+                    self?.updateChatMonitor()
+                }
+            }
+            .store(in: &cancellables)
+
+        settings.$chatLinks.dropFirst()
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] _ in
+                MainActor.assumeIsolated {
+                    self?.updateLinkedPullRequests()
+                    self?.recompute()
+                }
+            }
+            .store(in: &cancellables)
+    }
+
+    // MARK: Pull requests sent in chats
+
+    /// Reads Notification Center only while the feature is on; turning it off forgets what was found.
+    private func updateChatMonitor() {
+        guard mode == .live else { return }
+        if settings.chatLinksEnabled {
+            guard chatMonitor == nil else { return }
+            let monitor = ChatLinkMonitor { [weak self] snapshot in
+                DispatchQueue.main.async {
+                    MainActor.assumeIsolated { self?.receiveChats(snapshot) }
+                }
+            }
+            chatMonitor = monitor
+            monitor.start()
+            Log.app.info("Looking for pull requests sent in chats")
+        } else {
+            if let chatMonitor {
+                chatMonitor.stop()
+                Log.app.info("Stopped looking for pull requests sent in chats")
+            }
+            chatMonitor = nil
+            chatAccess = nil
+            chatProblem = nil
+            settings.forgetChatLinks()
+        }
+        updateLinkedPullRequests()
+        recompute()
+    }
+
+    private func receiveChats(_ snapshot: ChatLinkMonitor.Snapshot) {
+        if chatAccess != snapshot.access {
+            chatAccess = snapshot.access
+            Log.app.info("Notification Center access: \(snapshot.access.rawValue, privacy: .public)")
+            if snapshot.access == .granted { settings.chatAccessWasGranted = true }
+        }
+        if chatProblem != snapshot.problem {
+            chatProblem = snapshot.problem
+            if let problem = snapshot.problem { Log.app.error("\(problem, privacy: .public)") }
+        }
+        if snapshot.access == .granted {
+            if settings.addChatLinks(snapshot.links) {
+                Log.app.info("Pull request links in chats: \(self.settings.chatLinks.links.count)")
+            }
+        } else if setUpChatAccessWhenNeeded {
+            showChatAccessSetup?()
+        }
+        setUpChatAccessWhenNeeded = false
+    }
+
+    private func updateLinkedPullRequests() {
+        let keys = settings.chatLinksEnabled ? settings.chatLinks.keys : []
+        if let engine { Task { await engine.setLinkedPullRequests(keys) } }
+    }
+
+    /// While the setup window is open, checks for access every two seconds.
+    func setWaitingForChatAccess(_ waiting: Bool) {
+        chatMonitor?.setWaitingForAccess(waiting)
+        if waiting { chatMonitor?.refresh() }
+    }
+
+    /// Opens the message that sent the pull request: the exact message in Teams, or the app otherwise.
+    func openSource(_ item: PRSnapshot) {
+        guard let source = item.chatSource else { return }
+        if let url = source.messageURL, NSWorkspace.shared.open(url) { return }
+        if let app = NSWorkspace.shared.urlForApplication(withBundleIdentifier: source.app) {
+            NSWorkspace.shared.openApplication(at: app, configuration: NSWorkspace.OpenConfiguration())
+        }
     }
 
     private func watchNetworkAndSleep() {
@@ -221,6 +320,7 @@ final class PRStore: ObservableObject {
 
     /// When the panel opens: refresh unless that just happened.
     func refreshIfStale() {
+        chatMonitor?.refresh()
         guard Date().timeIntervalSince(refreshedAt ?? .distantPast) > 30 else { return }
         refresh()
     }
@@ -310,8 +410,12 @@ final class PRStore: ObservableObject {
         let now = Date()
         let seen = settings.seen
         let options = settings.classifierOptions
-        let resolved = state.records.compactMap {
-            PRClassifier.snapshot(for: $0, seenCutoff: seen.cutoff(for: $0.id), now: now, options: options)
+        let links = settings.chatLinksEnabled ? settings.chatLinks : ChatLinkState()
+        let resolved = state.records.compactMap { record -> PRSnapshot? in
+            var record = record
+            let found = links.links(for: record.id).filter { link in !record.chatLinks.contains { $0.id == link.id } }
+            record.chatLinks += found
+            return PRClassifier.snapshot(for: record, seenCutoff: seen.cutoff(for: record.id), now: now, options: options)
         }
         let sorted = PROrdering.sorted(resolved)
         self.now = now

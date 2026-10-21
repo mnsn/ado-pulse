@@ -50,6 +50,8 @@ public enum NotificationPlanner {
             for event in snapshot.events where !known.contains(event.id) && event.at >= notBefore {
                 // "Ready to complete" names who approved.
                 if event.kind == .approved && becameReady { continue }
+                // The chat app already announced the message.
+                if event.kind == .sentInChat { continue }
                 notes.append(note(for: event, in: snapshot))
             }
 
@@ -96,6 +98,9 @@ public enum NotificationPlanner {
         var body = event.text
         switch event.kind {
         case .mention: title = "\(actor) mentioned you"
+        case .sentInChat:
+            title = "\(actor) sent you a pull request"
+            body = event.app.map { "In \($0)." }
         case .reply: title = "\(actor) replied"
         case .comment: title = "\(actor) commented"
         case .reviewRequest:

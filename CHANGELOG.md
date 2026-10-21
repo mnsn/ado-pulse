@@ -1,5 +1,12 @@
 # Changelog
 
+## Unreleased
+
+- **Pull requests sent in chats**: turn it on, and when someone sends you a link to a pull request in
+  Teams, Slack, an email or any other app, it shows in Needs You, as "Dana sent this in Teams", until
+  you open it, vote or comment, it closes, or a week passes. Right-click it to open the message. It
+  reads Notification Center's database, so it needs Full Disk Access, and keeps only the links.
+
 ## 0.1.0 - 2026-10-21
 
 The first release.

@@ -25,7 +25,7 @@ public enum PRGroup: String, Sendable, Codable, CaseIterable, Comparable {
 /// Why a pull request is in its group. A reason can appear in more than one group: a vote that wants
 /// changes needs you until you've seen it, and then it waits.
 public enum PRReason: String, Sendable, Codable {
-    case mentioned, replied, commented, reviewRequested, newCommits, changesRequested, rejected
+    case mentioned, sentInChat, replied, commented, reviewRequested, newCommits, changesRequested, rejected
     case buildFailed, checkFailed, conflicts, buildExpired
     case readyToComplete, autoComplete
     case reviewPending
@@ -37,7 +37,7 @@ public enum PRReason: String, Sendable, Codable {
 /// Something that happened that you haven't seen yet. Approvals are news, but don't need you.
 public struct PREvent: Sendable, Codable, Equatable, Hashable, Identifiable {
     public enum Kind: String, Sendable, Codable {
-        case mention, reply, comment, reviewRequest, newCommits, changesRequested, rejected, approved
+        case mention, sentInChat, reply, comment, reviewRequest, newCommits, changesRequested, rejected, approved
 
         public var needsYou: Bool { self != .approved }
 
@@ -45,13 +45,14 @@ public struct PREvent: Sendable, Codable, Equatable, Hashable, Identifiable {
         var priority: Int {
             switch self {
             case .mention: return 0
-            case .reply: return 1
-            case .rejected: return 2
-            case .changesRequested: return 3
-            case .comment: return 4
-            case .reviewRequest: return 5
-            case .newCommits: return 6
-            case .approved: return 7
+            case .sentInChat: return 1
+            case .reply: return 2
+            case .rejected: return 3
+            case .changesRequested: return 4
+            case .comment: return 5
+            case .reviewRequest: return 6
+            case .newCommits: return 7
+            case .approved: return 8
             }
         }
     }
@@ -65,8 +66,13 @@ public struct PREvent: Sendable, Codable, Equatable, Hashable, Identifiable {
     public var threadId: Int?
     /// New commits, for `newCommits`.
     public var count: Int?
+    /// The app it was sent in, for `sentInChat`: "Teams".
+    public var app: String?
 
-    public init(id: String, kind: Kind, at: Date, actor: String? = nil, text: String? = nil, threadId: Int? = nil, count: Int? = nil) {
+    public init(
+        id: String, kind: Kind, at: Date, actor: String? = nil, text: String? = nil, threadId: Int? = nil, count: Int? = nil,
+        app: String? = nil
+    ) {
         self.id = id
         self.kind = kind
         self.at = at
@@ -74,6 +80,7 @@ public struct PREvent: Sendable, Codable, Equatable, Hashable, Identifiable {
         self.text = text
         self.threadId = threadId
         self.count = count
+        self.app = app
     }
 }
 
@@ -84,14 +91,17 @@ public struct PRRecord: Sendable, Equatable, Identifiable {
     public var details: PRDetails?
     /// Your identity ID in the pull request's organization.
     public var me: String
+    /// Links to it that people sent you.
+    public var chatLinks: [ChatLink]
 
     public var id: PRKey { pullRequest.key }
 
-    public init(pullRequest: PullRequest, role: PRRole, details: PRDetails? = nil, me: String) {
+    public init(pullRequest: PullRequest, role: PRRole, details: PRDetails? = nil, me: String, chatLinks: [ChatLink] = []) {
         self.pullRequest = pullRequest
         self.role = role
         self.details = details
         self.me = me.lowercased()
+        self.chatLinks = chatLinks
     }
 }
 
@@ -120,6 +130,8 @@ public struct PRSnapshot: Sendable, Codable, Equatable, Identifiable {
     /// The state of the required builds and status checks together, worst first; nil without any.
     public var checkState: Check.State?
     public var hasDetails: Bool
+    /// Where it was sent to you, while that needs you.
+    public var chatSource: ChatSource? = nil
 
     public var id: String { key.description }
 
@@ -127,15 +139,35 @@ public struct PRSnapshot: Sendable, Codable, Equatable, Identifiable {
     public var pendingEvents: [PREvent] { events.filter(\.kind.needsYou) }
 }
 
+/// The message that sent you a pull request: the app, who, and a link to the message when there is one.
+public struct ChatSource: Sendable, Codable, Equatable {
+    /// The app's bundle identifier.
+    public var app: String
+    public var appName: String
+    public var sender: String?
+    /// Opens the message itself (Teams); otherwise the app is just brought forward.
+    public var messageURL: URL?
+
+    public init(app: String, appName: String, sender: String?, messageURL: URL?) {
+        self.app = app
+        self.appName = appName
+        self.sender = sender
+        self.messageURL = messageURL
+    }
+}
+
 public struct ClassifierOptions: Sendable, Equatable {
     /// Pull requests without activity for this long go to Idle; nil keeps them where they are.
     public var inactiveAfter: TimeInterval?
     /// How long completed and abandoned pull requests stay in Done.
     public var keepDoneFor: TimeInterval
+    /// How long a pull request someone sent you keeps needing you, unless you act on it sooner.
+    public var keepChatLinksFor: TimeInterval
 
-    public init(inactiveAfter: TimeInterval? = 14 * 86_400, keepDoneFor: TimeInterval = 86_400) {
+    public init(inactiveAfter: TimeInterval? = 14 * 86_400, keepDoneFor: TimeInterval = 86_400, keepChatLinksFor: TimeInterval = 7 * 86_400) {
         self.inactiveAfter = inactiveAfter
         self.keepDoneFor = keepDoneFor
+        self.keepChatLinksFor = keepChatLinksFor
     }
 }
 
@@ -169,6 +201,8 @@ public enum PRClassifier {
 
         switch pr.status {
         case .completed, .abandoned:
+            // Done is for your own pull requests.
+            guard record.role == .author else { return nil }
             let closed = pr.closedAt ?? lastActivity
             guard now.timeIntervalSince(closed) <= options.keepDoneFor, closed > seenCutoff else { return nil }
             let completed = pr.status == .completed
@@ -181,19 +215,29 @@ public enum PRClassifier {
             break
         }
 
+        var events: [PREvent] = []
         if let details {
-            let events = record.role == .author
+            events = record.role == .author
                 ? authorEvents(pr, details, me: me, seenCutoff: seenCutoff)
                 : reviewerEvents(pr, details, me: me, seenCutoff: seenCutoff)
-            snapshot.events = events.sorted { $0.at > $1.at }
+        }
+        let chats = pendingChatLinks(record, seenCutoff: seenCutoff, now: now, options: options)
+        events += chats.map { link in
+            PREvent(id: "s" + link.id, kind: .sentInChat, at: link.sentAt, actor: link.sender, app: link.appName)
+        }
+        snapshot.events = events.sorted { $0.at > $1.at }
+        if let newest = chats.max(by: { $0.sentAt < $1.sentAt }) {
+            snapshot.chatSource = ChatSource(app: newest.app, appName: newest.appName, sender: newest.sender, messageURL: newest.messageURL)
         }
         let pending = snapshot.pendingEvents
         if let top = pending.min(by: { ($0.kind.priority, -$0.at.timeIntervalSince1970) < ($1.kind.priority, -$1.at.timeIntervalSince1970) }) {
             let (reason, headline) = describe(top, among: pending)
-            set(.needsYou, reason, headline, top.text ?? eventDetail(top, pr), since: pending.map(\.at).max())
+            set(.needsYou, reason, headline, top.text ?? eventDetail(top, pr, role: record.role), since: pending.map(\.at).max())
             if let thread = top.threadId { snapshot.url = pr.threadURL(thread) }
             return snapshot
         }
+        // A pull request you're not on is listed only while someone's message about it needs you.
+        if record.role == .linked { return nil }
 
         if record.role == .reviewer, pr.reviewer(me)?.hasDeclined == true {
             set(.idle, .declined, "You declined")
@@ -212,7 +256,7 @@ public enum PRClassifier {
         switch record.role {
         case .author:
             classifyAuthor(pr, details, approvals: approvals, lastActivity: lastActivity, set: set)
-        case .reviewer:
+        case .reviewer, .linked:
             classifyReviewer(pr, me: me, approvals: approvals, set: set)
         }
         return snapshot
@@ -294,6 +338,24 @@ public enum PRClassifier {
         return events
     }
 
+    /// Links people sent you that still need you: sent after you last looked, in the last week, and not
+    /// followed by your comment, vote or (on your own pull request) push.
+    static func pendingChatLinks(_ record: PRRecord, seenCutoff: Date, now: Date, options: ClassifierOptions) -> [ChatLink] {
+        record.chatLinks.filter { link in
+            guard link.sentAt > seenCutoff, now.timeIntervalSince(link.sentAt) <= options.keepChatLinksFor else { return false }
+            guard let details = record.details else { return true }
+            let me = record.me
+            let commented = details.threads.contains { thread in
+                thread.comments.contains { $0.author.id == me && $0.publishedAt > link.sentAt }
+            }
+            let acted = details.activity.contains { item in
+                guard item.at > link.sentAt, item.actor?.id == me else { return false }
+                return item.kind == .vote || (record.role == .author && item.kind == .push)
+            }
+            return !commented && !acted
+        }
+    }
+
     /// Comments from people (not bots), other than you, published after `date`.
     private static func unanswered(_ thread: ReviewThread, me: String, after date: Date) -> [ReviewComment] {
         thread.comments.filter { $0.author.id != me && !$0.author.isBot && $0.publishedAt > date }
@@ -309,6 +371,9 @@ public enum PRClassifier {
         let sameKind = events.filter { $0.kind == top.kind }.count
         switch top.kind {
         case .mention: return (.mentioned, "\(actor) mentioned you")
+        case .sentInChat:
+            let app = top.app ?? "a chat"
+            return (.sentInChat, top.actor.map { "\($0) sent this in \(app)" } ?? "Sent to you in \(app)")
         case .reply: return (.replied, sameKind > 1 ? "\(sameKind) new replies" : "\(actor) replied")
         case .comment: return (.commented, sameKind > 1 ? "\(sameKind) new comments" : "\(actor) commented")
         case .reviewRequest: return (.reviewRequested, "Review requested")
@@ -321,10 +386,11 @@ public enum PRClassifier {
         }
     }
 
-    private static func eventDetail(_ event: PREvent, _ pr: PullRequest) -> String? {
+    private static func eventDetail(_ event: PREvent, _ pr: PullRequest, role: PRRole) -> String? {
         switch event.kind {
         case .reviewRequest: return "By \(pr.author.name)"
         case .newCommits: return "By \(pr.author.name)"
+        case .sentInChat: return role == .author ? "Your pull request" : "By \(pr.author.name)"
         default: return nil
         }
     }

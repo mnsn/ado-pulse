@@ -12,6 +12,7 @@ enum CLI {
           --json           Print the same as JSON, with counts
           --watch          Print changes as they happen (Ctrl-C to stop)
           --orgs           List your organizations, and the ones where you have pull requests
+          --chats          List the pull request links in Notification Center's notifications (needs Full Disk Access)
           --render <dir>   Draw the menu bar with the panel open, and each widget size, to PNGs (light and dark)
           --demo           Use made-up pull requests, with any of the above or the app
           --org <name>     Read this organization instead of the app's choice (repeatable)
@@ -55,6 +56,9 @@ enum CLI {
         if arguments.contains("--orgs") {
             return listOrganizations()
         }
+        if arguments.contains("--chats") {
+            return listChatLinks()
+        }
         if arguments.contains("--watch") {
             watch(options)
         }
@@ -82,14 +86,25 @@ enum CLI {
         )
     }
 
+    /// The links the app found, when pull requests sent in chats are on.
+    private static func chatLinks() -> ChatLinkState {
+        guard appDefaults?.bool(forKey: SettingsKey.chatLinksEnabled) == true else { return ChatLinkState() }
+        return appDefaults?.data(forKey: SettingsKey.chatLinks).flatMap { try? JSONDecoder().decode(ChatLinkState.self, from: $0) }
+            ?? ChatLinkState()
+    }
+
     private static func seenState() -> SeenState {
         appDefaults?.data(forKey: SettingsKey.seen).flatMap { try? JSONDecoder().decode(SeenState.self, from: $0) }
             ?? SeenState.firstRun()
     }
 
-    static func resolve(_ snapshot: PulseSnapshot, seen: SeenState, options: ClassifierOptions, now: Date = Date()) -> [PRSnapshot] {
-        PROrdering.sorted(snapshot.records.compactMap {
-            PRClassifier.snapshot(for: $0, seenCutoff: seen.cutoff(for: $0.id), now: now, options: options)
+    static func resolve(
+        _ snapshot: PulseSnapshot, seen: SeenState, options: ClassifierOptions, links: ChatLinkState = ChatLinkState(), now: Date = Date()
+    ) -> [PRSnapshot] {
+        PROrdering.sorted(snapshot.records.compactMap { record in
+            var record = record
+            record.chatLinks += links.links(for: record.id).filter { link in !record.chatLinks.contains { $0.id == link.id } }
+            return PRClassifier.snapshot(for: record, seenCutoff: seen.cutoff(for: record.id), now: now, options: options)
         })
     }
 
@@ -113,9 +128,10 @@ enum CLI {
             }
         }
         let configuration = PulseEngine.Configuration(organizations: organizations, keepDoneFor: classifierOptions().keepDoneFor)
-        let snapshot = wait { await PulseEngine.loadOnce(client: client, configuration: configuration) }
+        let links = chatLinks()
+        let snapshot = wait { await PulseEngine.loadOnce(client: client, configuration: configuration, linked: links.keys) }
         return Loaded(
-            organizations: organizations, items: resolve(snapshot, seen: seenState(), options: classifierOptions()),
+            organizations: organizations, items: resolve(snapshot, seen: seenState(), options: classifierOptions(), links: links),
             problem: snapshot.problem?.message
         )
     }
@@ -157,7 +173,7 @@ enum CLI {
         [pad(group, 9), pad(status, 30), pad(since, 7), pad(title, 50), String(detail.prefix(70))].joined(separator: " ")
     }
 
-    private static func pad(_ text: String, _ width: Int) -> String {
+    static func pad(_ text: String, _ width: Int) -> String {
         let clipped = text.count > width ? String(text.prefix(width - 1)) + "…" : text
         return clipped.padding(toLength: width, withPad: " ", startingAt: 0)
     }
@@ -186,18 +202,57 @@ enum CLI {
         }
     }
 
+    /// What `--chats` finds: every pull request link in the stored notifications, with who sent it where.
+    private static func listChatLinks() -> Int32 {
+        let database = NotificationCenterDatabase.defaultURL()
+        switch DatabaseAccess.check(database) {
+        case .denied:
+            FileHandle.standardError.write(Data("""
+                Can't read Notification Center's database: give Terminal Full Disk Access in System Settings › \
+                Privacy & Security › Full Disk Access, then quit and reopen Terminal and run this again.
+
+                """.utf8))
+            return 1
+        case .missing:
+            FileHandle.standardError.write(Data("There's no Notification Center database at \(database.path).\n".utf8))
+            return 1
+        case .granted:
+            break
+        }
+        let records: [StoredRecord]
+        do {
+            records = try NotificationCenterDatabase.load(at: database)
+        } catch {
+            FileHandle.standardError.write(Data("\(error)\n".utf8))
+            return 1
+        }
+        let links = ChatLinkScanner.scan(records)
+        let apps = Set(records.map(\.bundleIdentifier)).count
+        print("\(records.count) notifications from \(apps) apps; \(links.count) links to pull requests")
+        let now = Date()
+        for link in links.sorted(by: { $0.sentAt > $1.sentAt }) {
+            print([pad(Elapsed.short(since: link.sentAt, now: now), 7), pad(link.appName, 10), pad(link.sender ?? "", 28),
+                   "\(link.key)  \(link.messageURL == nil ? "" : "(message link)")"].joined(separator: " "))
+        }
+        return 0
+    }
+
     private static func watch(_ options: Options) -> Never {
         let organizations = options.organizations.isEmpty
             ? appDefaults?.stringArray(forKey: SettingsKey.organizations) ?? []
             : options.organizations
-        let printer = WatchPrinter(seen: seenState(), options: classifierOptions())
+        let links = chatLinks()
+        let printer = WatchPrinter(seen: seenState(), options: classifierOptions(), links: links)
         let queue = DispatchQueue(label: "ADOPulse.watch")
         let engine = PulseEngine(
             client: ADOClient(tokens: AzureCLITokenProvider()), configuration: PulseEngine.Configuration(organizations: organizations)
         ) { snapshot in queue.async { printer.print(snapshot) } }
         setvbuf(stdout, nil, _IOLBF, 0)
         print("Watching \(organizations.joined(separator: ", ")), refreshing every minute — Ctrl-C to stop")
-        Task { await engine.start() }
+        Task {
+            await engine.setLinkedPullRequests(links.keys)
+            await engine.start()
+        }
         withExtendedLifetime(engine) { dispatchMain() }
     }
 
@@ -222,6 +277,7 @@ enum CLI {
 private final class WatchPrinter: @unchecked Sendable {
     private let seen: SeenState
     private let options: ClassifierOptions
+    private let links: ChatLinkState
     private var problem: String?
     private var previous: [String: PRSnapshot] = [:]
     private let formatter: DateFormatter = {
@@ -230,9 +286,10 @@ private final class WatchPrinter: @unchecked Sendable {
         return formatter
     }()
 
-    init(seen: SeenState, options: ClassifierOptions) {
+    init(seen: SeenState, options: ClassifierOptions, links: ChatLinkState) {
         self.seen = seen
         self.options = options
+        self.links = links
     }
 
     func print(_ snapshot: PulseSnapshot) {
@@ -243,7 +300,7 @@ private final class WatchPrinter: @unchecked Sendable {
             problem = message
             if let message { Swift.print("\(formatter.string(from: now))  ! \(message)") }
         }
-        for item in CLI.resolve(snapshot, seen: seen, options: options, now: now) {
+        for item in CLI.resolve(snapshot, seen: seen, options: options, links: links, now: now) {
             let old = previous[item.id]
             previous[item.id] = item
             guard old == nil || old?.group != item.group || old?.headline != item.headline || old?.detail != item.detail else { continue }

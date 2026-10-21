@@ -17,9 +17,11 @@ public struct PRKey: Hashable, Comparable, Sendable, Codable, CustomStringConver
     }
 }
 
-/// Whether you wrote the pull request or were asked to review it.
+/// Whether you wrote the pull request, were asked to review it, or someone sent you a link to it.
 public enum PRRole: String, Sendable, Codable {
     case author, reviewer
+    /// You're neither its author nor a reviewer: someone sent it to you in a chat.
+    case linked
 }
 
 public enum Vote: Int, Sendable, Codable, CaseIterable {

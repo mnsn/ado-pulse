@@ -135,6 +135,10 @@ public actor PulseEngine {
     private var identities: [String: String] = [:]
     private var userName: String?
     private var firstLoaded: [String: Date] = [:]
+    /// Pull requests people sent you, to list even when you're not on them.
+    private var linkedKeys: Set<PRKey> = []
+    /// Linked pull requests that couldn't be read or are closed, and when, to try again only an hour later.
+    private var linkedFailures: [PRKey: Date] = [:]
     private var active: [PRKey: Listed] = [:]
     private var done: [PRKey: PullRequest] = [:]
     private var details: [PRKey: PRDetails] = [:]
@@ -196,10 +200,20 @@ public actor PulseEngine {
     }
 
     /// One load, without the timer: for the command line and tests.
-    public static func loadOnce(client: ADOClient, configuration: Configuration) async -> PulseSnapshot {
+    public static func loadOnce(client: ADOClient, configuration: Configuration, linked: Set<PRKey> = []) async -> PulseSnapshot {
         let engine = PulseEngine(client: client, configuration: configuration) { _ in }
+        await engine.setLinkedPullRequests(linked)
         await engine.refreshNow()
         return await engine.currentSnapshot()
+    }
+
+    /// Pull requests people sent you. The ones not in your lists are read by ID, and listed as `linked`.
+    public func setLinkedPullRequests(_ keys: Set<PRKey>) {
+        guard keys != linkedKeys else { return }
+        let added = !keys.subtracting(linkedKeys).isEmpty
+        linkedKeys = keys
+        linkedFailures = linkedFailures.filter { keys.contains($0.key) }
+        if added { waker.wake() }
     }
 
     public func currentSnapshot() -> PulseSnapshot {
@@ -308,6 +322,7 @@ public actor PulseEngine {
         listed = listed.filter { watched.contains($0.key.organization) }
         completed = completed.filter { watched.contains($0.key.organization) }
         firstLoaded = firstLoaded.filter { watched.contains($0.key) }
+        await addLinked(to: &listed, at: startedAt)
         active = listed
         done = completed.filter { listed[$0.key] == nil && ($0.value.closedAt ?? .distantPast) > closedSince }
         details = details.filter { listed[$0.key] != nil }
@@ -330,6 +345,36 @@ public actor PulseEngine {
             problem = .someOrganizations("Couldn't read \(names).")
         } else {
             problem = nil
+        }
+    }
+
+    /// Reads the pull requests people sent you that aren't in your lists (a few each refresh), and lists the
+    /// open ones. One you can't read is tried again an hour later.
+    private func addLinked(to listed: inout [PRKey: Listed], at date: Date) async {
+        let wanted = linkedKeys
+            .filter { listed[$0] == nil }
+            .filter { linkedFailures[$0].map { date.timeIntervalSince($0) > 3_600 } ?? true }
+            .sorted()
+        for key in wanted.prefix(10) {
+            do {
+                let me: String
+                if let known = identities[key.organization] {
+                    me = known
+                } else {
+                    me = try await client.get(ADOEndpoint.connectionData(organization: key.organization), as: ADOConnectionData.self)
+                        .authenticatedUser.id.lowercased()
+                    identities[key.organization] = me
+                }
+                let dto = try await client.get(ADOEndpoint.pullRequest(organization: key.organization, id: key.number), as: ADOPullRequest.self)
+                let pr = PullRequest(organization: key.organization, dto)
+                // A closed one is read again an hour later too, in case it's reopened.
+                linkedFailures[key] = pr.status == .active ? nil : date
+                guard pr.status == .active, linkedKeys.contains(key) else { continue }
+                let role: PRRole = pr.author.id == me ? .author : pr.reviewer(me) != nil ? .reviewer : .linked
+                listed[key] = Listed(pullRequest: pr, role: role)
+            } catch {
+                linkedFailures[key] = date
+            }
         }
     }
 

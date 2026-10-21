@@ -56,6 +56,7 @@ extension PRReason {
     var symbol: String {
         switch self {
         case .mentioned: return "at.circle.fill"
+        case .sentInChat: return "paperplane.circle.fill"
         case .replied: return "arrowshape.turn.up.left.circle.fill"
         case .commented: return "text.bubble.fill"
         case .reviewRequested, .reviewPending: return "eye.circle.fill"

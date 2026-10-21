@@ -9,6 +9,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private lazy var store = PRStore(settings: settings, notifier: notifier, mode: mode)
     private var statusItem: StatusItemController?
     private var widget: DesktopWidgetController?
+    private var chatAccess: ChatAccessController?
 
     init(mode: PRStore.Mode) {
         self.mode = mode
@@ -28,6 +29,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         Log.app.info("Launched from \(Bundle.main.bundlePath, privacy: .public)\(self.mode == .demo ? " with demo data" : "", privacy: .public)")
         statusItem = StatusItemController(store: store, settings: settings, loginItem: loginItem)
         widget = DesktopWidgetController(store: store, settings: settings, loginItem: loginItem)
+        let chatAccess = ChatAccessController(store: store)
+        self.chatAccess = chatAccess
+        store.showChatAccessSetup = { [weak chatAccess] in chatAccess?.show() }
         notifier.onOpen = { [weak self] key, url in
             guard let self else { return }
             if let url {

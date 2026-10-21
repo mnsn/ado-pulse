@@ -1,4 +1,4 @@
-.PHONY: build test app package install uninstall run demo dump watch render icon demo-check screenshots clean
+.PHONY: build test app package install uninstall run demo dump watch render icon signing-identity demo-check screenshots clean
 
 # With only the Command Line Tools installed, the compiler sometimes misses Swift Testing's macro
 # plugin (it lives in a subfolder), so point it there explicitly.
@@ -48,7 +48,7 @@ render: build
 # Checks that the made-up pull requests land in the expected groups.
 demo-check: $(if $(filter command line,$(origin PULSE)),,build)
 	@counts=$$("$(PULSE)" --demo --json | jq -cS .counts); \
-	expected='{"done":1,"failing":2,"idle":2,"needsYou":3,"ready":2,"toReview":1,"waiting":2}'; \
+	expected='{"done":1,"failing":2,"idle":2,"needsYou":4,"ready":2,"toReview":1,"waiting":2}'; \
 	if [ "$$counts" = "$$expected" ]; then echo "demo-check passed: $$counts"; \
 	else echo "demo-check failed: expected $$expected, got $$counts" >&2; exit 1; fi
 
@@ -57,6 +57,10 @@ screenshots: build
 	.build/debug/ADOPulse --demo --render build/screenshots
 	mkdir -p docs/images
 	for name in $(SCREENSHOTS); do cp build/screenshots/$$name.png docs/images/; done
+
+# Once per Mac: a certificate to sign builds with, so Full Disk Access survives rebuilds.
+signing-identity:
+	./scripts/make-signing-identity.sh
 
 icon:
 	swift scripts/make-icon.swift build/AppIcon.iconset

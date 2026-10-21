@@ -17,6 +17,9 @@ reporting:
 - any way it could change anything in Azure DevOps: it's meant to send only GET requests,
 - any way it could expose your token, or your pull requests' titles and comments, outside your Mac,
   including by sending them to a model other than Apple Intelligence's on-device model,
+- with **Pull Requests Sent in Chats** on: any way it could change Notification Center's data, keep a
+  message's text, or let a notification make it open something other than an Azure DevOps pull
+  request or the message it came in,
 - any way another app or a web page could make it run a command or open a link it shouldn't, and
 - problems with how the build scripts and workflows here build, sign or publish the app.
 

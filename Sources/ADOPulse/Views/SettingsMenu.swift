@@ -16,6 +16,11 @@ struct SettingsMenuContent: View {
         Toggle("Summaries by Apple Intelligence", isOn: $settings.summaries)
             .disabled(!store.summarizer.isAvailable)
         Toggle("Show To Review in the Menu Bar", isOn: $settings.showToReview)
+        Toggle("Pull Requests Sent in Chats", isOn: $settings.chatLinksEnabled)
+            .disabled(store.mode == .demo)
+        if settings.chatLinksEnabled && store.chatAccess == .denied {
+            Button("Allow Full Disk Access…") { store.showChatAccessSetup?() }
+        }
 
         Divider()
 

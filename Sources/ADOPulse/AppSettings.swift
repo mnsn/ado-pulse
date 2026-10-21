@@ -95,6 +95,18 @@ final class AppSettings: ObservableObject {
     @Published var hasDiscovered: Bool {
         didSet { defaults.set(hasDiscovered, forKey: Key.hasDiscovered) }
     }
+    /// Looks for pull request links in the notifications other apps post, such as Teams. Off by default:
+    /// it needs Full Disk Access.
+    @Published var chatLinksEnabled: Bool {
+        didSet { defaults.set(chatLinksEnabled, forKey: Key.chatLinksEnabled) }
+    }
+    /// The links found so far: who sent which pull request, in which app and when. Never the messages.
+    @Published private(set) var chatLinks: ChatLinkState
+    /// ADO Pulse could read Notification Center before: if it can't now, it was probably rebuilt with
+    /// another signature, and has to be added to Full Disk Access again.
+    @Published var chatAccessWasGranted: Bool {
+        didSet { defaults.set(chatAccessWasGranted, forKey: Key.chatAccessWasGranted) }
+    }
     @Published private(set) var seen: SeenState
 
     init(defaults: UserDefaults = .standard, now: Date = Date()) {
@@ -111,6 +123,12 @@ final class AppSettings: ObservableObject {
         organizations = defaults.stringArray(forKey: Key.organizations) ?? []
         knownOrganizations = defaults.stringArray(forKey: Key.knownOrganizations) ?? []
         hasDiscovered = defaults.bool(forKey: Key.hasDiscovered)
+        chatLinksEnabled = defaults.bool(forKey: Key.chatLinksEnabled)
+        chatAccessWasGranted = defaults.bool(forKey: Key.chatAccessWasGranted)
+        var links = defaults.data(forKey: Key.chatLinks).flatMap { try? JSONDecoder().decode(ChatLinkState.self, from: $0) }
+            ?? ChatLinkState()
+        links.prune(now: now)
+        chatLinks = links
 
         if let data = defaults.data(forKey: Key.seen), let stored = try? JSONDecoder().decode(SeenState.self, from: data) {
             seen = stored
@@ -162,6 +180,27 @@ final class AppSettings: ObservableObject {
         persistSeen()
     }
 
+    /// Keeps newly found links. Returns whether there were any.
+    @discardableResult
+    func addChatLinks(_ found: [ChatLink], now: Date = Date()) -> Bool {
+        var updated = chatLinks
+        let changed = updated.merge(ChatLinkState.canonical(found, organizations: organizations))
+        let pruned = updated.prune(now: now)
+        guard changed || pruned else { return false }
+        chatLinks = updated
+        if let data = try? JSONEncoder().encode(updated) {
+            defaults.set(data, forKey: Key.chatLinks)
+        }
+        return changed
+    }
+
+    /// Forgets every link found, when the feature is turned off.
+    func forgetChatLinks() {
+        guard !chatLinks.links.isEmpty else { return }
+        chatLinks = ChatLinkState()
+        defaults.removeObject(forKey: Key.chatLinks)
+    }
+
     /// Replaces the seen state, for the demo.
     func useSeenState(_ state: SeenState) {
         seen = state
@@ -202,4 +241,7 @@ enum SettingsKey {
     static let knownOrganizations = "knownOrganizations"
     static let hasDiscovered = "hasDiscoveredOrganizations"
     static let seen = "seenState"
+    static let chatLinksEnabled = "chatLinksEnabled"
+    static let chatLinks = "chatLinks"
+    static let chatAccessWasGranted = "chatAccessWasGranted"
 }

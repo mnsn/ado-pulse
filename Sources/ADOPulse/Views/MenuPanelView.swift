@@ -51,6 +51,26 @@ struct MenuPanelView: View {
                 ProblemView(problem: problem) { store.signIn() }
             }
 
+            if settings.chatLinksEnabled && store.chatAccess == .denied {
+                HStack(spacing: 6) {
+                    Image(systemName: "paperplane")
+                        .foregroundStyle(.secondary)
+                    Text("Pull requests sent in chats need Full Disk Access.")
+                        .foregroundStyle(.secondary)
+                    Button("Set Up…") { store.showChatAccessSetup?() }
+                        .buttonStyle(.borderless)
+                    Spacer()
+                }
+                .font(.system(size: 11))
+                .padding(.horizontal, 8)
+            } else if settings.chatLinksEnabled, let problem = store.chatProblem {
+                Label(problem, systemImage: "exclamationmark.triangle")
+                    .font(.system(size: 11))
+                    .foregroundStyle(.secondary)
+                    .padding(.horizontal, 8)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+
             if settings.notifications && store.notificationsBlocked {
                 HStack(spacing: 6) {
                     Image(systemName: "bell.slash")
@@ -99,7 +119,7 @@ struct MenuPanelView: View {
                 DisclosureGroup(isExpanded: $showIdle) {
                     VStack(spacing: 0) {
                         ForEach(idle) { item in
-                            PRRowView(item: item, now: store.now, compact: true) { store.open(item) }
+                            PRRowView(item: item, now: store.now, compact: true, openSource: source(item)) { store.open(item) }
                         }
                     }
                 } label: {
@@ -132,9 +152,14 @@ struct MenuPanelView: View {
             }
             .padding(.horizontal, 8)
             ForEach(items) { item in
-                PRRowView(item: item, now: store.now) { store.open(item) }
+                PRRowView(item: item, now: store.now, openSource: source(item)) { store.open(item) }
             }
         }
+    }
+
+    /// Opens the message a pull request was sent in, when it was.
+    private func source(_ item: PRSnapshot) -> (() -> Void)? {
+        item.chatSource == nil ? nil : { store.openSource(item) }
     }
 
     private var footer: some View {
