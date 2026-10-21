@@ -133,9 +133,11 @@ When you turn on **Pull Requests Sent in Chats**, ADO Pulse reads Notification C
 `~/Library/Group Containers/group.com.apple.usernoted/db2/db`, which keeps the notifications every app
 has posted (about the latest hundred per app; for Teams, a couple of days).
 
-- It opens the database read-only, with a short read each time, and never writes to it. It reads it
-  when you turn the setting on, whenever the database's write-ahead log changes (watched with kqueue,
-  so a new message shows within a second), when you open the panel, and once a minute.
+- It opens the database with a read-only SQLite connection, for a short read each time, and never
+  changes it. Like any SQLite reader, it takes brief shared locks and updates SQLite's shared-memory
+  index (`db-shm`) while it reads; neither changes any notification. It reads it when you turn the
+  setting on, whenever the database's write-ahead log changes (watched with kqueue, so a new message
+  shows within a second), when you open the panel, and once a minute.
 - Each notification's title, subtitle and text are searched for links to pull requests:
   `dev.azure.com/{org}/{project}/_git/{repo}/pullrequest/{id}` and the older
   `{org}.visualstudio.com/…/pullrequest/{id}`.
