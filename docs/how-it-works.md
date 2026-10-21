@@ -162,12 +162,15 @@ macOS keeps the requirement of the build you allowed, and turning the switch off
 remove ADO Pulse from the list, or run `tccutil reset SystemPolicyAllFiles com.asaf.ADOPulse`, and add
 it again.
 `make signing-identity` instead creates a self-signed certificate, and builds signed with it keep the
-same designated requirement, so access survives rebuilds. Its private key can't be exported, and no
-app may use it without asking, codesign included: macOS asks for your login password each time a
-build is signed. A key that codesign could use without asking (Always Allow) would let anything running
-as you sign its own code as ADO Pulse, and get the Full Disk Access you gave it, so the script and each
-build check for that. Releases are signed the same way,
-with the project's own certificate (see "Releasing" in [CONTRIBUTING.md](../CONTRIBUTING.md)), so
+same designated requirement, so access survives rebuilds. It imports the certificate's key with
+`scripts/signing-key.swift`, so that no app may use it without asking, codesign and security included,
+and nothing can export it, not even an app you allow: macOS asks for your login password each time a
+build is signed. (`security import -T ""` trusts no app either, but its `-x` has no effect on a
+PKCS #12, whose key could then be exported.) A key that some app could use without asking (Always
+Allow) would let anything running as you sign its own code as ADO Pulse, and get the Full Disk Access
+you gave it, so each build first reads the key's access list, which asks nothing, and won't sign with
+such a key. Releases are signed with the project's own certificate, whose key the release workflow
+imports the same way, for codesign only (see "Releasing" in [CONTRIBUTING.md](../CONTRIBUTING.md)), so
 access survives updates.
 
 ## Notifications

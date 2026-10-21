@@ -62,4 +62,5 @@ prints a designated requirement that ends with `certificate leaf = H"…"`, the 
 [scripts/release-certificate.sha1](https://github.com/mnsn/ado-pulse/blob/main/scripts/release-certificate.sha1).
 The certificate's private key is a secret of the repository's `release` environment, not a
 repository secret, so only the release workflow's signing job can use it, for a `v*` tag, after a
-maintainer approves the release.
+maintainer approves the release. The job imports it into a keychain of its own, where only codesign
+may use it and nothing can export it, and deletes that keychain before any other step runs.

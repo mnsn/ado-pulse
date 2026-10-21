@@ -1,4 +1,4 @@
-.PHONY: build test app package install uninstall run demo dump watch render icon signing-identity demo-check screenshots clean
+.PHONY: build test app package install uninstall run demo dump watch render icon signing-identity signing-key-check demo-check screenshots clean
 
 # With only the Command Line Tools installed, the compiler sometimes misses Swift Testing's macro
 # plugin (it lives in a subfolder), so point it there explicitly.
@@ -67,6 +67,11 @@ screenshots: build
 # Once per Mac: a certificate to sign builds with, so Full Disk Access survives rebuilds.
 signing-identity:
 	./scripts/make-signing-identity.sh
+
+# Checks, in throwaway keychains, that no app may use the keys builds and releases are signed with
+# without asking (but codesign, for a release's), and that they can't be exported.
+signing-key-check:
+	./scripts/test-signing-key.sh
 
 icon:
 	swift scripts/make-icon.swift build/AppIcon.iconset

@@ -12,6 +12,10 @@
   for a day.
 - Releases are signed with the project's own certificate rather than ad hoc, so macOS keeps the
   access you give ADO Pulse when you update it.
+- Building from source: `make signing-identity` creates a certificate to sign your builds with, so the
+  Full Disk Access you give them survives rebuilds. No app may use its key without asking, not even
+  codesign, and it can't be exported. Builds won't sign with a key that some app may use without
+  asking (Always Allow). `scripts/make-signing-identity.sh --delete` goes back to ad hoc builds.
 
 Fixes:
 
@@ -27,10 +31,6 @@ Fixes:
   again.
 - A run of the Azure CLI can't hang refreshes: what it leaves running is ended.
 - `--demo` works with `--orgs` and `--watch`, rather than reading your own organizations.
-- Building from source: the key `make signing-identity` creates now asks before every use, and can't
-  be exported, so nothing else running as you can sign code as ADO Pulse and get its Full Disk Access.
-  If you made one with an earlier version, run `scripts/make-signing-identity.sh` with `--replace`, or
-  with `--delete` to sign your builds ad hoc, as they are without one.
 
 ## 0.1.0 - 2026-10-21
 

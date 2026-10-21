@@ -114,11 +114,12 @@ A build you make yourself is signed ad hoc, and macOS ties Full Disk Access to t
 you use **Pull Requests Sent in Chats**, allow it again after each `make install`. Turning ADO Pulse
 off and on in the list keeps the old build's signature, so remove it with − (or run
 `tccutil reset SystemPolicyAllFiles com.asaf.ADOPulse`) and add it again with +. To keep it across
-builds, `make signing-identity` creates a certificate to sign them with. macOS then asks for your
-login password each time a build is signed: choose **Allow**, never Always Allow, which would let
-anything running as you sign code as ADO Pulse and get its Full Disk Access. If you made one with an
-earlier version, which let codesign use it without asking, run `scripts/make-signing-identity.sh`
-with `--replace`, or with `--delete` to go back to ad hoc.
+builds, `make signing-identity` creates a certificate to sign them with. No app may use its key
+without asking, not even codesign, and it can't be exported, so macOS asks for your login password
+each time a build is signed: choose **Allow**, never Always Allow, which would let anything running
+as you sign code as ADO Pulse and get its Full Disk Access. If you did, builds won't sign with it
+until you run `scripts/make-signing-identity.sh --replace`, which makes a new one, or `--delete`, to
+go back to ad hoc.
 
 ## Signing in
 

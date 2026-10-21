@@ -1,6 +1,7 @@
 #!/bin/bash
 # Builds "ADO Pulse.app" into ./build, for this Mac's architecture, signed with the certificate that
-# scripts/make-signing-identity.sh creates, or ad hoc when there isn't one (as on CI).
+# scripts/make-signing-identity.sh creates, or ad hoc when there isn't one (as on CI). It won't sign with
+# a key that some app may use without asking, or that can be exported.
 #   --universal   builds for both Apple silicon and Intel instead.
 #   --install     also copies it to ~/Applications and (re)launches it.
 #   --ad-hoc      signs it ad hoc even when the certificate exists.
@@ -32,6 +33,19 @@ if ! $AD_HOC && ! security find-certificate -c "$IDENTITY" ${KEYCHAIN:+"$KEYCHAI
     echo "      sent in chats, to this exact build. To allow it again, run" >&2
     echo "      tccutil reset SystemPolicyAllFiles $(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' Resources/Info.plist)" >&2
     echo "      and add ADO Pulse again in Privacy & Security › Full Disk Access. See make signing-identity." >&2
+fi
+# A key that some app may use without asking, or that can be exported, would let anything running as you
+# sign code as ADO Pulse, and get its Full Disk Access. A keychain of its own, like the release
+# workflow's, is the exception.
+if ! $AD_HOC && [[ -z "$KEYCHAIN" ]]; then
+    STATUS=0
+    ADO_PULSE_SIGNING_IDENTITY="$IDENTITY" ./scripts/make-signing-identity.sh --check || STATUS=$?
+    if [[ $STATUS -eq 3 ]]; then
+        echo "error: not signing with \"$IDENTITY\". Or build with --ad-hoc." >&2
+        exit 1
+    elif [[ $STATUS -ne 0 ]]; then
+        echo "warning: couldn't check which apps may use the \"$IDENTITY\" key." >&2
+    fi
 fi
 
 BUILD_FLAGS=(-c release)
@@ -71,7 +85,7 @@ else
         echo "       password and choose Allow (never Always Allow), or build with --ad-hoc." >&2
         exit 1
     fi
-    # Your own key: warn if anything running as you could sign with it without asking.
+    # Your own key: Always Allow, just now, would let anything running as you sign with it from now on.
     if [[ -z "$KEYCHAIN" ]]; then
         ADO_PULSE_SIGNING_IDENTITY="$IDENTITY" ./scripts/make-signing-identity.sh --check || true
     fi

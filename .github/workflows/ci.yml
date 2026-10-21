@@ -40,6 +40,10 @@ jobs:
       - name: Check the demo data
         run: make demo-check
 
+      # On both versions of macOS, since it's macOS that enforces what keeps the keys safe.
+      - name: Check the signing keys' protection
+        run: make signing-key-check
+
       # The universal app that a release ships, checked and zipped (see scripts/package.sh).
       - name: Package the app
         run: make package

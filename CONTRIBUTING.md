@@ -33,6 +33,7 @@ make install       # build the app, copy it to ~/Applications and launch it
 make icon          # regenerate Resources/AppIcon.icns
 make signing-identity  # optional: a certificate to sign builds with, so Full Disk Access survives rebuilds;
                        # each build then asks for your login password: choose Allow, never Always Allow
+make signing-key-check # check, in throwaway keychains, that the signing keys can't be exported or used unasked
 ```
 
 [How it works](docs/how-it-works.md) explains where the data comes from and how a pull request's
