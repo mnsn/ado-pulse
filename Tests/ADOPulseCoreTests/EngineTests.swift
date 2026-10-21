@@ -376,6 +376,32 @@ import Testing
         #expect(classify(snapshot, now: now)[1]?.reason == .abandoned)
     }
 
+    @Test func keepsLookingUpPullRequestsThatLeftTheList() async throws {
+        let now = Date()
+        let server = StubServer()
+        let numbers = Array(1...7)
+        server.serveOrganization(mine: numbers.map { Fixture.pullRequest($0) })
+        let engine = engine(server)
+        await engine.refreshNow()
+
+        // All seven were abandoned at once, more than a refresh looks up, and reading one fails the first time.
+        server.on("/_apis/git/pullrequests", query: ["searchCriteria.status": "active", "searchCriteria.creatorId": Fixture.me],
+                  json: Fixture.list([]))
+        let attempts = Locked(0)
+        for number in numbers {
+            server.on("/_apis/git/pullrequests/\(number)") { _ in
+                if number == 1, attempts.increment() == 1 { return .status(500) }
+                return .json(Fixture.pullRequest(number, status: "abandoned", closed: now.addingTimeInterval(-minute)))
+            }
+        }
+        await engine.refreshNow()
+        await engine.refreshNow()
+        let snapshot = await engine.currentSnapshot()
+        #expect(snapshot.records.map(\.id.number) == numbers)
+        #expect(snapshot.records.allSatisfy { $0.pullRequest.status == .abandoned })
+        #expect(attempts.value == 2)
+    }
+
     @Test func backsOffWhenThrottled() async {
         let server = StubServer()
         server.serveOrganization(mine: [Fixture.pullRequest(1)])
