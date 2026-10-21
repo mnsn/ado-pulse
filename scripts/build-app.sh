@@ -69,6 +69,10 @@ else
         echo "       password and choose Allow (never Always Allow), or build with --ad-hoc." >&2
         exit 1
     fi
+    # Your own key: warn if anything running as you could sign with it without asking.
+    if [[ -z "$KEYCHAIN" ]]; then
+        ADO_PULSE_SIGNING_IDENTITY="$IDENTITY" ./scripts/make-signing-identity.sh --check || true
+    fi
 fi
 REQUIREMENT="$(codesign -d -r- "$APP" 2>&1 | sed -n 's/^#* *designated => //p')"
 echo "Built $APP (version $VERSION, $(lipo -archs "$APP/Contents/MacOS/$EXECUTABLE"))"

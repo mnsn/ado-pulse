@@ -4,20 +4,22 @@
 # rather than the code's hashes, and macOS keeps ADO Pulse's Full Disk Access (for pull requests sent
 # in chats) across rebuilds. Ad-hoc signed builds lose it every time. Run it once per Mac; running it
 # again checks that the key works.
-#   scripts/make-signing-identity.sh [--replace] [keychain]
+#   scripts/make-signing-identity.sh [--replace | --check] [keychain]
 # No app may use the key without asking, and it can't be exported: macOS asks for your login password
 # each time something signs with it, a build included. Choose Allow, never Always Allow, which would let
 # anything running as you sign code as ADO Pulse, and so get the Full Disk Access you gave it.
 # --replace deletes the certificate and its key first, such as one an earlier version of this script
 # made, which let codesign use the key without asking. Then allow Full Disk Access for the next build.
+# --check only says, without asking for anything, whether codesign may use the key without asking.
 # ADO_PULSE_SIGNING_IDENTITY picks another name.
 set -euo pipefail
 
 REPLACE=false
-if [[ "${1:-}" == "--replace" ]]; then
-    REPLACE=true
-    shift
-fi
+CHECK=false
+case "${1:-}" in
+    --replace) REPLACE=true; shift ;;
+    --check) CHECK=true; shift ;;
+esac
 NAME="${ADO_PULSE_SIGNING_IDENTITY:-ADO Pulse Signing}"
 KEYCHAIN="${1:-$HOME/Library/Keychains/login.keychain-db}"
 
@@ -35,6 +37,24 @@ check_identity() {
         exit 1
     fi
     echo "Code signed with it is identified by: $(codesign -d -r- "$WORK/probe" 2>&1 | sed -n 's/^#* *designated => //p')"
+    if trusts_codesign; then
+        echo "That was Always Allow: codesign may now use the key without asking, so anything running as you" >&2
+        echo "could sign code as ADO Pulse. Run this again with --replace, and choose Allow." >&2
+        exit 1
+    fi
+}
+
+# Whether codesign may use the key without asking: what Always Allow does. The key is found by its label,
+# the SHA-1 of its public key, and only its own access list is read.
+trusts_codesign() {
+    local label
+    label="$(security find-certificate -c "$NAME" -p "$KEYCHAIN" 2>/dev/null | /usr/bin/openssl x509 -pubkey -noout 2>/dev/null \
+        | /usr/bin/openssl rsa -pubin -RSAPublicKey_out -outform DER 2>/dev/null | shasum -a 1 | cut -d ' ' -f 1 | tr 'a-f' 'A-F')"
+    security dump-keychain -a "$KEYCHAIN" 2>/dev/null | awk -v label="0x$label" '
+        /^keychain:/ { if (hit) print block; block = ""; hit = 0 }
+        { block = block $0 "\n" }
+        index($0, "0x00000006 <blob>=" label) { hit = 1 }
+        END { if (hit) print block }' | grep -q ': /usr/bin/codesign '
 }
 
 # The SHA-1 of each certificate named exactly $NAME (security's -c matches part of a name).
@@ -43,6 +63,15 @@ certificates() {
         /^SHA-1 hash:/ { hash = $3 }
         /"labl"<blob>=/ { label = $0; sub(/^[^=]*="/, "", label); sub(/"$/, "", label); if (label == name) print hash }'
 }
+
+if $CHECK; then
+    if trusts_codesign; then
+        echo "warning: codesign may use the \"$NAME\" key without asking (Always Allow), so anything running as you" >&2
+        echo "         could sign code as ADO Pulse. Run scripts/make-signing-identity.sh --replace, and choose Allow." >&2
+        exit 1
+    fi
+    exit 0
+fi
 
 if $REPLACE; then
     for hash in $(certificates); do
