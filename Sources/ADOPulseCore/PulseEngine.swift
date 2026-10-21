@@ -234,7 +234,8 @@ public actor PulseEngine {
         self.configuration = configuration
         if organizationsChanged {
             let kept = Set(configuration.organizations)
-            active = active.filter { kept.contains($0.key.organization) }
+            // Pull requests people sent you stay, whichever organizations are watched.
+            active = active.filter { kept.contains($0.key.organization) || linked[$0.key] != nil }
             done = done.filter { kept.contains($0.key.organization) }
             vanished = vanished.filter { kept.contains($0.key.organization) }
             firstLoaded = firstLoaded.filter { kept.contains($0.key) }
@@ -257,7 +258,16 @@ public actor PulseEngine {
         let added = !keys.subtracting(linkedKeys).isEmpty
         linkedKeys = keys
         linkedFailures = linkedFailures.filter { keys.contains($0.key) }
+        // The ones listed only because someone sent them go with their links, now rather than on the next refresh.
+        let gone = Set(linked.keys).subtracting(keys)
         linked = linked.filter { keys.contains($0.key) }
+        for key in gone {
+            active[key] = nil
+            details[key] = nil
+            entries[key] = nil
+        }
+        if configuration.organizations.isEmpty && keys.isEmpty { listNothing() }
+        publish()
         if added { waker.wake() }
     }
 
@@ -271,8 +281,7 @@ public actor PulseEngine {
         let organizations = configuration.organizations
         // Pull requests people sent you are read even without organizations to watch.
         guard !organizations.isEmpty || !linkedKeys.isEmpty else {
-            problem = .noOrganizations
-            hasLoaded = true
+            listNothing()
             publish()
             return
         }
@@ -459,6 +468,18 @@ public actor PulseEngine {
             }
         }
         for (key, read) in linked { listed[key] = read.listed }
+    }
+
+    /// Without organizations to watch or pull requests sent to you, there's nothing to read, or to list.
+    private func listNothing() {
+        active = [:]
+        done = [:]
+        details = [:]
+        entries = [:]
+        vanished = [:]
+        linked = [:]
+        problem = .noOrganizations
+        hasLoaded = true
     }
 
     private func forgetAccount() {

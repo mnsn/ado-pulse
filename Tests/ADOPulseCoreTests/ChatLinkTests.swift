@@ -406,6 +406,38 @@ private func waitFor(_ what: String, timeout: Duration = .seconds(10), until con
         #expect(snapshot.problem == nil)
     }
 
+    @Test func theyGoWithTheirLinks() async throws {
+        let server = StubServer()
+        server.on("/contoso/_apis/connectionData", json: ["authenticatedUser": ["id": Fixture.me.uppercased()]])
+        // Your own pull request, and one you review, in an organization you don't watch.
+        server.on("/contoso/_apis/git/pullrequests/8", json: Fixture.pullRequest(8))
+        server.on("/contoso/_apis/git/pullrequests/9", json: Fixture.pullRequest(9, author: People.alex, reviewers: [Fixture.reviewer(People.me)]))
+        server.on("/_apis/policy/evaluations", json: Fixture.list([]))
+        server.on("/threads", json: Fixture.list([]))
+        let published = SnapshotCollector()
+        let engine = PulseEngine(client: server.client(), configuration: PulseEngine.Configuration(organizations: [])) {
+            published.add($0)
+        }
+        await engine.setLinkedPullRequests([PRKey(Fixture.org, 8), PRKey(Fixture.org, 9)])
+        await engine.refreshNow()
+        #expect(published.last?.records.map(\.role) == [.author, .reviewer])
+        // They stay when you watch another organization, or none again.
+        await engine.setConfiguration(PulseEngine.Configuration(organizations: ["fabrikam"]))
+        #expect(published.last?.records.map(\.id.number) == [8, 9])
+        await engine.setConfiguration(PulseEngine.Configuration(organizations: []))
+
+        // A link goes, and its pull request with it, without waiting for a refresh.
+        await engine.setLinkedPullRequests([PRKey(Fixture.org, 9)])
+        #expect(published.last?.records.map(\.id.number) == [9])
+
+        // The feature is turned off: there's nothing to read, or to list.
+        await engine.setLinkedPullRequests([])
+        #expect(published.last?.records.isEmpty == true)
+        #expect(published.last?.problem == .noOrganizations)
+        await engine.refreshNow()
+        #expect(published.last?.records.isEmpty == true)
+    }
+
     @Test func readsAPullRequestYouWereSentByItsID() async throws {
         let server = StubServer()
         server.serveOrganization(mine: [Fixture.pullRequest(1)])
