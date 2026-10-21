@@ -111,7 +111,9 @@ Then turn on **Launch at Login** as above. To update, pull and run `make install
 it, run `make uninstall`.
 
 A build you make yourself is signed ad hoc, and macOS ties Full Disk Access to that exact build: if
-you use **Pull Requests Sent in Chats**, allow it again after each `make install`. To keep it across
+you use **Pull Requests Sent in Chats**, allow it again after each `make install`. Turning ADO Pulse
+off and on in the list keeps the old build's signature, so remove it with − (or run
+`tccutil reset SystemPolicyAllFiles com.asaf.ADOPulse`) and add it again with +. To keep it across
 builds, `make signing-identity` creates a certificate to sign them with. macOS then asks for your
 login password each time a build is signed: choose **Allow**, never Always Allow, which would let
 anything running as you sign code as ADO Pulse and get its Full Disk Access. If you made one with an

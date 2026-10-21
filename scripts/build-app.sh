@@ -29,7 +29,9 @@ done
 if ! $AD_HOC && ! security find-certificate -c "$IDENTITY" ${KEYCHAIN:+"$KEYCHAIN"} >/dev/null 2>&1; then
     AD_HOC=true
     echo "note: signed ad hoc (there's no \"$IDENTITY\" certificate): macOS ties Full Disk Access, for pull requests" >&2
-    echo "      sent in chats, to this exact build, so allow it again after the next one. See make signing-identity." >&2
+    echo "      sent in chats, to this exact build. To allow it again, run" >&2
+    echo "      tccutil reset SystemPolicyAllFiles $(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' Resources/Info.plist)" >&2
+    echo "      and add ADO Pulse again in Privacy & Security › Full Disk Access. See make signing-identity." >&2
 fi
 
 BUILD_FLAGS=(-c release)

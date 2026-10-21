@@ -158,6 +158,9 @@ Links aren't announced: the app they came in already did.
 macOS protects that database, so ADO Pulse needs Full Disk Access, which it asks for when you turn the
 setting on, and macOS ties that access to the app's code signature. A build from source is signed ad
 hoc, a signature that changes with every build, so access has to be allowed again after each one.
+macOS keeps the requirement of the build you allowed, and turning the switch off and on keeps it too:
+remove ADO Pulse from the list, or run `tccutil reset SystemPolicyAllFiles com.asaf.ADOPulse`, and add
+it again.
 `make signing-identity` instead creates a self-signed certificate, and builds signed with it keep the
 same designated requirement, so access survives rebuilds. Its private key can't be exported, and no
 app may use it without asking, codesign included: macOS asks for your login password each time a

@@ -117,9 +117,10 @@ struct ChatAccessView: View {
                 .fixedSize(horizontal: false, vertical: true)
 
             if settings.chatAccessWasGranted && !granted {
-                Label("ADO Pulse had access before. That happens when it's rebuilt with another signature: remove ADO Pulse from the list with −, then add it again.", systemImage: "exclamationmark.triangle.fill")
+                Label("ADO Pulse had access before. That happens when it's rebuilt with another signature: remove ADO Pulse from the list with −, then add it again. If it still has no access, run `tccutil reset SystemPolicyAllFiles \(AppSettings.domain)` in Terminal, then add it again.", systemImage: "exclamationmark.triangle.fill")
                     .foregroundStyle(.orange)
                     .fixedSize(horizontal: false, vertical: true)
+                    .textSelection(.enabled)
             }
 
             if controller.isBundled {
