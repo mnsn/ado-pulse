@@ -264,12 +264,14 @@ private func waitFor(_ what: String, timeout: Duration = .seconds(10), until con
         let link = sent(pr)
         // Opened from ADO Pulse after the message.
         #expect(classify(pr, role: .linked, details: makeDetails(for: pr), links: [link], cutoff: t(-minute)) == nil)
-        // Commented after it.
+        // Commented after it: it's answered until you've seen that, and then it isn't listed.
         let answered = ReviewThread(id: 3, comments: [comment(1, me, "Looks good", at: t(-5 * minute))])
-        #expect(classify(pr, role: .linked, details: makeDetails(for: pr, threads: [answered]), links: [link]) == nil)
+        #expect(classify(pr, role: .linked, details: makeDetails(for: pr, threads: [answered]), links: [link])?.group == .answered)
+        #expect(classify(pr, role: .linked, details: makeDetails(for: pr, threads: [answered]), links: [link], cutoff: t(-5 * minute)) == nil)
         // Voted after it.
         let vote = Activity(threadId: 4, kind: .vote, at: t(-minute), actor: me, vote: .approved)
-        #expect(classify(pr, role: .linked, details: makeDetails(for: pr, activity: [vote]), links: [link]) == nil)
+        #expect(classify(pr, role: .linked, details: makeDetails(for: pr, activity: [vote]), links: [link])?.group == .answered)
+        #expect(classify(pr, role: .linked, details: makeDetails(for: pr, activity: [vote]), links: [link], cutoff: t(-minute)) == nil)
         // A week went by.
         #expect(classify(pr, role: .linked, details: makeDetails(for: pr), links: [sent(pr, at: t(-8 * day))]) == nil)
         // An earlier comment doesn't count.
@@ -295,7 +297,12 @@ private func waitFor(_ what: String, timeout: Duration = .seconds(10), until con
         #expect(snapshot.reason == .sentInChat)
         #expect(snapshot.detail == "Your pull request")
         let push = Activity(threadId: 5, kind: .push, at: t(-minute), actor: me, commitCount: 1)
-        #expect(classify(pr, role: .author, details: makeDetails(for: pr, checks: checks, activity: [push]), links: [sent(pr)])?.group == .waiting)
+        let pushed = try #require(classify(pr, role: .author, details: makeDetails(for: pr, checks: checks, activity: [push]), links: [sent(pr)]))
+        #expect(pushed.group == .answered)
+        #expect(pushed.headline == "You pushed 1 commit")
+        #expect(pushed.detail == "Dana Whitfield sent this in Teams")
+        #expect(classify(pr, role: .author, details: makeDetails(for: pr, checks: checks, activity: [push]), links: [sent(pr)],
+                         cutoff: t(-minute))?.group == .waiting)
     }
 
     @Test func aClosedPullRequestYouWerentOnIsntListed() {

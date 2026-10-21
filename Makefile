@@ -48,7 +48,7 @@ render: build
 # Checks that the made-up pull requests land in the expected groups.
 demo-check: $(if $(filter command line,$(origin PULSE)),,build)
 	@counts=$$("$(PULSE)" --demo --json | jq -cS .counts); \
-	expected='{"done":1,"failing":2,"idle":2,"needsYou":4,"ready":2,"toReview":1,"waiting":2}'; \
+	expected='{"answered":1,"done":1,"failing":2,"idle":2,"needsYou":4,"ready":2,"toReview":1,"waiting":2}'; \
 	if [ "$$counts" = "$$expected" ]; then echo "demo-check passed: $$counts"; \
 	else echo "demo-check failed: expected $$expected, got $$counts" >&2; exit 1; fi
 

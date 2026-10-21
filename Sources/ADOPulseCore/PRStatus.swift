@@ -4,6 +4,9 @@ import Foundation
 public enum PRGroup: String, Sendable, Codable, CaseIterable, Comparable {
     /// Something new for you: a reply, a mention, a comment, a review request, a vote that wants changes.
     case needsYou
+    /// Something that needed you that you've since answered yourself in Azure DevOps, until you've seen it
+    /// in the panel. Only for pull requests that would otherwise wait or be idle.
+    case answered
     /// Your pull requests with a failed build or check, merge conflicts or an expired build.
     case failing
     /// Your pull requests that are approved and pass every required check.
@@ -26,6 +29,7 @@ public enum PRGroup: String, Sendable, Codable, CaseIterable, Comparable {
 /// changes needs you until you've seen it, and then it waits.
 public enum PRReason: String, Sendable, Codable {
     case mentioned, sentInChat, replied, commented, reviewRequested, newCommits, changesRequested, rejected
+    case answered
     case buildFailed, checkFailed, conflicts, buildExpired
     case readyToComplete, autoComplete
     case reviewPending
@@ -130,7 +134,7 @@ public struct PRSnapshot: Sendable, Codable, Equatable, Identifiable {
     /// The state of the required builds and status checks together, worst first; nil without any.
     public var checkState: Check.State?
     public var hasDetails: Bool
-    /// Where it was sent to you, while that needs you.
+    /// Where it was sent to you: while that needs you, and until you've seen that you answered it.
     public var chatSource: ChatSource? = nil
 
     public var id: String { key.description }
@@ -163,11 +167,17 @@ public struct ClassifierOptions: Sendable, Equatable {
     public var keepDoneFor: TimeInterval
     /// How long a pull request someone sent you keeps needing you, unless you act on it sooner.
     public var keepChatLinksFor: TimeInterval
+    /// How long what you answered stays in Answered if you don't open the panel.
+    public var keepAnsweredFor: TimeInterval
 
-    public init(inactiveAfter: TimeInterval? = 14 * 86_400, keepDoneFor: TimeInterval = 86_400, keepChatLinksFor: TimeInterval = 7 * 86_400) {
+    public init(
+        inactiveAfter: TimeInterval? = 14 * 86_400, keepDoneFor: TimeInterval = 86_400, keepChatLinksFor: TimeInterval = 7 * 86_400,
+        keepAnsweredFor: TimeInterval = 86_400
+    ) {
         self.inactiveAfter = inactiveAfter
         self.keepDoneFor = keepDoneFor
         self.keepChatLinksFor = keepChatLinksFor
+        self.keepAnsweredFor = keepAnsweredFor
     }
 }
 
@@ -236,29 +246,40 @@ public enum PRClassifier {
             if let thread = top.threadId { snapshot.url = pr.threadURL(thread) }
             return snapshot
         }
-        // A pull request you're not on is listed only while someone's message about it needs you.
-        if record.role == .linked { return nil }
+
+        let yours = answers(record, seenCutoff: seenCutoff, now: now, options: options)
+        if let link = yours.compactMap(\.link).max(by: { $0.sentAt < $1.sentAt }) {
+            snapshot.chatSource = ChatSource(app: link.app, appName: link.appName, sender: link.sender, messageURL: link.messageURL)
+        }
+        /// Moves it to Answered, saying what you did and what it answered; false when you haven't answered anything.
+        func showAnswer() -> Bool {
+            let byPriority = { (answer: Answer) in (answer.kind.priority, -answer.at.timeIntervalSince1970) }
+            guard let top = yours.min(by: { byPriority($0) < byPriority($1) }) else { return false }
+            set(.answered, .answered, top.headline, top.question, since: yours.map(\.at).max())
+            if let thread = top.threadId { snapshot.url = pr.threadURL(thread) }
+            return true
+        }
+        // A pull request you're not on is listed only while someone's message about it needs you, and until
+        // you've seen that you answered it.
+        if record.role == .linked { return showAnswer() ? snapshot : nil }
 
         if record.role == .reviewer, pr.reviewer(me)?.hasDeclined == true {
             set(.idle, .declined, "You declined")
-            return snapshot
-        }
-        if pr.isDraft {
+        } else if pr.isDraft {
             set(.idle, .draft, "Draft", record.role == .reviewer ? "By \(pr.author.name)" : nil)
-            return snapshot
-        }
-        if let inactiveAfter = options.inactiveAfter, now.timeIntervalSince(lastActivity) > inactiveAfter {
+        } else if let inactiveAfter = options.inactiveAfter, now.timeIntervalSince(lastActivity) > inactiveAfter {
             let days = Int(now.timeIntervalSince(lastActivity) / 86_400)
             set(.idle, .inactive, "No activity for \(days) days")
-            return snapshot
+        } else {
+            switch record.role {
+            case .author:
+                classifyAuthor(pr, details, approvals: approvals, lastActivity: lastActivity, set: set)
+            case .reviewer, .linked:
+                classifyReviewer(pr, me: me, approvals: approvals, set: set)
+            }
         }
-
-        switch record.role {
-        case .author:
-            classifyAuthor(pr, details, approvals: approvals, lastActivity: lastActivity, set: set)
-        case .reviewer, .linked:
-            classifyReviewer(pr, me: me, approvals: approvals, set: set)
-        }
+        // What you answered stays in view until you've seen it, unless there's something else to do.
+        if snapshot.group == .idle || snapshot.group == .waiting { _ = showAnswer() }
         return snapshot
     }
 
@@ -354,6 +375,155 @@ public enum PRClassifier {
             }
             return !commented && !acted
         }
+    }
+
+    /// Something that needed you that you've since answered yourself in Azure DevOps.
+    struct Answer: Equatable {
+        enum Action: Equatable {
+            case vote(Vote?)
+            case comment
+            case push(commits: Int?)
+        }
+
+        /// What needed you, and who it came from.
+        var kind: PREvent.Kind
+        var from: String?
+        /// When you answered, and how.
+        var at: Date
+        var action: Action
+        /// The message that sent it to you, for `sentInChat`.
+        var link: ChatLink? = nil
+        /// The thread you answered in, for comments.
+        var threadId: Int? = nil
+
+        /// What you did: "You approved", "You replied", "You pushed 2 commits".
+        var headline: String {
+            switch action {
+            case .vote(let vote):
+                switch vote ?? Vote.none {
+                case .approved: return "You approved"
+                case .approvedWithSuggestions: return "You approved with suggestions"
+                case .waitingForAuthor: return "You asked for changes"
+                case .rejected: return "You rejected it"
+                case .none: return "You voted"
+                }
+            case .comment:
+                return kind == .sentInChat ? "You commented" : "You replied"
+            case .push(let commits):
+                guard let commits, commits > 0 else { return "You pushed changes" }
+                return commits == 1 ? "You pushed 1 commit" : "You pushed \(commits) commits"
+            }
+        }
+
+        /// What it answered: "Dana Whitfield sent this in Teams", "Sam Rivera replied to you".
+        var question: String {
+            let who = from ?? "Someone"
+            switch kind {
+            case .sentInChat:
+                let app = link?.appName ?? "a chat"
+                return from.map { "\($0) sent this in \(app)" } ?? "Sent to you in \(app)"
+            case .mention: return "\(who) mentioned you"
+            case .reply: return "\(who) replied to you"
+            case .comment: return "\(who) commented"
+            case .reviewRequest: return "\(who) asked you to review"
+            case .newCommits: return "New commits by \(who)"
+            case .changesRequested: return "\(who) asked for changes"
+            case .rejected: return "\(who) rejected it"
+            case .approved: return "\(who) approved"
+            }
+        }
+    }
+
+    /// What needed you since you last looked that you've answered yourself, in the last `keepAnsweredFor`.
+    /// Each mirrors what made it need you: a message about it, answered by your vote, comment or (on your own
+    /// pull request) push; a comment, by your reply in its thread; a review request, or new commits since your
+    /// vote, by your vote; and on your own pull request, a vote that wanted changes, by your push.
+    static func answers(_ record: PRRecord, seenCutoff: Date, now: Date, options: ClassifierOptions) -> [Answer] {
+        guard let details = record.details else { return [] }
+        let pr = record.pullRequest
+        let me = record.me
+        let byTime = { (lhs: Activity, rhs: Activity) in lhs.at < rhs.at }
+        let votes = details.activity.filter { $0.kind == .vote && $0.actor?.id == me && $0.vote != Vote.none }.sorted(by: byTime)
+        let pushes = record.role == .author ? details.activity.filter { $0.kind == .push && $0.actor?.id == me }.sorted(by: byTime) : []
+        let comments = details.threads.flatMap(\.comments).filter { $0.author.id == me }.sorted { $0.publishedAt < $1.publishedAt }
+        var answers: [Answer] = []
+
+        for link in record.chatLinks where link.sentAt > seenCutoff {
+            let candidates: [Answer?] = [
+                votes.first { $0.at > link.sentAt }.map {
+                    Answer(kind: .sentInChat, from: link.sender, at: $0.at, action: .vote($0.vote), link: link)
+                },
+                comments.first { $0.publishedAt > link.sentAt }.map {
+                    Answer(kind: .sentInChat, from: link.sender, at: $0.publishedAt, action: .comment, link: link)
+                },
+                pushes.first { $0.at > link.sentAt }.map {
+                    Answer(kind: .sentInChat, from: link.sender, at: $0.at, action: .push(commits: $0.commitCount), link: link)
+                },
+            ]
+            // Answered while it still needed you.
+            if let first = candidates.compactMap({ $0 }).min(by: { $0.at < $1.at }),
+               first.at.timeIntervalSince(link.sentAt) <= options.keepChatLinksFor {
+                answers.append(first)
+            }
+        }
+
+        for thread in details.threads {
+            let mine = thread.comments.filter { $0.author.id == me }
+            for comment in thread.comments where comment.author.id != me && !comment.author.isBot && comment.publishedAt > seenCutoff {
+                guard let reply = mine.first(where: { $0.publishedAt > comment.publishedAt }) else { continue }
+                let kind: PREvent.Kind
+                if comment.mentions.contains(me) {
+                    kind = .mention
+                } else if mine.contains(where: { $0.publishedAt < comment.publishedAt }) {
+                    kind = .reply
+                } else if record.role == .author {
+                    kind = .comment
+                } else {
+                    // Comments between others don't concern you as a reviewer.
+                    continue
+                }
+                answers.append(Answer(kind: kind, from: comment.author.name, at: reply.publishedAt, action: .comment, threadId: thread.id))
+            }
+        }
+
+        switch record.role {
+        case .reviewer:
+            // A review request. Voting on a pull request you weren't on adds you as a reviewer yourself, which
+            // isn't one.
+            let additions = details.activity.filter { $0.kind == .reviewersChanged && $0.added.contains(me) }
+            var requested: (at: Date, by: String)?
+            if let added = additions.last(where: { $0.actor?.id != me }) {
+                requested = (added.at, added.actor?.name ?? pr.author.name)
+            } else if additions.isEmpty {
+                requested = (pr.createdAt, pr.author.name)
+            }
+            if let requested {
+                let published = details.activity.last { $0.kind == .draftChanged }?.at ?? .distantPast
+                let at = max(requested.at, published)
+                if at > seenCutoff, let vote = votes.first(where: { $0.at > at }) {
+                    answers.append(Answer(kind: .reviewRequest, from: requested.by, at: vote.at, action: .vote(vote.vote)))
+                }
+            }
+            // New commits since your vote, answered by voting again.
+            for (previous, next) in zip(votes, votes.dropFirst()) {
+                let pushed = details.activity.contains { $0.kind == .push && $0.at > previous.at && $0.at < next.at && $0.at > seenCutoff }
+                if pushed {
+                    answers.append(Answer(kind: .newCommits, from: pr.author.name, at: next.at, action: .vote(next.vote)))
+                }
+            }
+        case .author:
+            // A vote that wanted changes, answered by your push.
+            for item in details.activity where item.kind == .vote && item.at > seenCutoff {
+                guard let voter = item.actor, voter.id != me, item.vote == .waitingForAuthor || item.vote == .rejected,
+                      let push = pushes.first(where: { $0.at > item.at })
+                else { continue }
+                answers.append(Answer(kind: item.vote == .rejected ? .rejected : .changesRequested, from: voter.name,
+                                      at: push.at, action: .push(commits: push.commitCount)))
+            }
+        case .linked:
+            break
+        }
+        return answers.filter { now.timeIntervalSince($0.at) < options.keepAnsweredFor }
     }
 
     /// Comments from people (not bots), other than you, published after `date`.
@@ -531,6 +701,7 @@ public enum PROrdering {
 
 public struct GroupCounts: Sendable, Equatable, Codable {
     public var needsYou = 0
+    public var answered = 0
     public var failing = 0
     public var ready = 0
     public var toReview = 0
@@ -548,6 +719,7 @@ public struct GroupCounts: Sendable, Equatable, Codable {
         get {
             switch group {
             case .needsYou: return needsYou
+            case .answered: return answered
             case .failing: return failing
             case .ready: return ready
             case .toReview: return toReview
@@ -559,6 +731,7 @@ public struct GroupCounts: Sendable, Equatable, Codable {
         set {
             switch group {
             case .needsYou: needsYou = newValue
+            case .answered: answered = newValue
             case .failing: failing = newValue
             case .ready: ready = newValue
             case .toReview: toReview = newValue

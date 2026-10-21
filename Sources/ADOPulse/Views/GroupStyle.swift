@@ -6,6 +6,7 @@ extension PRGroup {
     var title: String {
         switch self {
         case .needsYou: return "Needs You"
+        case .answered: return "Answered"
         case .failing: return "Failing"
         case .ready: return "Ready to Complete"
         case .toReview: return "To Review"
@@ -29,6 +30,7 @@ extension PRGroup {
     var nsColor: NSColor {
         switch self {
         case .needsYou: return .systemOrange
+        case .answered: return .systemGreen
         case .failing: return .systemRed
         case .ready: return .systemGreen
         case .toReview: return .systemTeal
@@ -42,6 +44,7 @@ extension PRGroup {
     var symbol: String {
         switch self {
         case .needsYou: return "hand.raised.fill"
+        case .answered: return "checkmark.bubble.fill"
         case .failing: return "xmark.circle.fill"
         case .ready: return "checkmark.circle.fill"
         case .toReview: return "eye.circle.fill"
@@ -63,6 +66,7 @@ extension PRReason {
         case .newCommits: return "arrow.triangle.2.circlepath.circle.fill"
         case .changesRequested: return "exclamationmark.bubble.fill"
         case .rejected: return "hand.thumbsdown.circle.fill"
+        case .answered: return "checkmark.bubble.fill"
         case .buildFailed: return "xmark.circle.fill"
         case .checkFailed: return "xmark.octagon.fill"
         case .conflicts: return "arrow.triangle.branch"

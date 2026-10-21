@@ -82,6 +82,9 @@ policies, someone approved); and **Waiting** otherwise, with what it's waiting f
 inactive, or you approved or declined them, **To Review** if you haven't voted, and **Waiting** if
 you asked the author for changes.
 
+A pull request that would be **Idle** or **Waiting** is in **Answered** instead while there's
+something you answered yourself that you haven't seen yet (see below).
+
 ## What counts as new
 
 Azure DevOps has no read or unread state for pull requests, so ADO Pulse keeps its own
@@ -101,6 +104,22 @@ After the cutoff, these need you:
   haven't voted yet, and new commits since your vote.
 
 Approvals are news too: they're announced, but they don't need you.
+
+### Answered
+
+Each of those can also be answered in Azure DevOps (`PRClassifier.answers`): a reply or mention by
+your comment after it in the same thread (on your pull request, any comment); a review request by
+your vote; new commits since your vote by voting again; a vote that wanted changes on your pull
+request by your push; and a link someone sent you by your vote, your comment or, on your pull
+request, your push. Voting on a pull request you weren't asked to review adds you as a reviewer
+yourself, which doesn't count as a request.
+
+When something that needed you after the cutoff has been answered in the last day, the pull request
+is in **Answered**, with what you did ("You approved") and what it answered ("Dana Whitfield sent
+this in Teams"), unless it's failing, ready to complete or to review. It isn't counted in the menu
+bar, announced, or in the brief. When the panel closes, each pull request it showed in Answered is
+marked seen up to when you answered it, not up to the time it closed, so anything that came later
+still counts as new.
 
 ## Pull requests sent in chats
 
@@ -125,7 +144,8 @@ has posted (about the latest hundred per app; for Teams, a couple of days).
 A pull request that isn't in your lists (you're not its author or a reviewer) is read with a GET by
 its ID, and listed only while the link needs you. A link needs you until you open the pull request
 from ADO Pulse, vote or comment on it after the message (or push to it, if it's yours), it closes,
-or a week passes. Links aren't announced: the app they came in already did.
+or a week passes. Once you've voted or commented, it's in **Answered** until you've seen that.
+Links aren't announced: the app they came in already did.
 
 macOS protects that database, so ADO Pulse needs Full Disk Access, which it asks for when you turn the
 setting on, and macOS ties that access to the app's code signature. `make signing-identity` creates

@@ -52,6 +52,7 @@ and looks and works the same way.
 | Group | When |
 |---|---|
 | **Needs You** | Something new you haven't seen: a reply to your comment, a mention, a comment on your pull request, a review request, new commits since your vote, a reviewer who's waiting for you or rejected it, or a link to it someone sent you (if you turned that on) |
+| **Answered** | Something that needed you that you've since taken care of in Azure DevOps, such as "You approved · Dana sent this in Teams", until you've seen it in the panel |
 | **Failing** | Your pull request has a failed build or status check, merge conflicts, or a build that expired and has to run again |
 | **Ready to Complete** | Your pull request is approved and every required policy passes (or it completes automatically) |
 | **To Review** | Review requests you've seen but haven't voted on |
@@ -63,6 +64,12 @@ and looks and works the same way.
 Seen**, moves it to its usual group until something new happens. Azure DevOps doesn't track what
 you've read, so ADO Pulse keeps that itself. The first time it runs, only the last three days count
 as new. Comments from build services and bots don't count.
+
+When you answer something in Azure DevOps instead (you vote, reply, or push the changes someone
+asked for), it moves to **Answered**, saying what you did and what it answered, so it doesn't just
+disappear. Once you've seen it there (when the panel closes), or after a day, it goes back to its
+usual group. A pull request that's failing, ready to complete, or still yours to review stays in
+that group instead.
 
 ## Install
 
@@ -169,7 +176,8 @@ not channel posts or reactions, and emails from Azure DevOps itself don't count.
 
 macOS protects Notification Center's database, so ADO Pulse needs **Full Disk Access**. It shows you
 how to grant it when you turn the setting on. A pull request someone sent you needs you until you
-open it from ADO Pulse, vote or comment on it, it closes, or a week goes by. Notification Center
+open it from ADO Pulse, vote or comment on it, it closes, or a week goes by. If you vote or comment,
+it moves to **Answered** until you've seen it in the panel. Notification Center
 keeps only the latest hundred or so notifications per app, so ADO Pulse remembers the links it finds
 (only the links, as described in [Privacy](#privacy)).
 

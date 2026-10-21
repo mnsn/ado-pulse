@@ -6,6 +6,10 @@
   Teams, Slack, an email or any other app, it shows in Needs You, as "Dana sent this in Teams", until
   you open it, vote or comment, it closes, or a week passes. Right-click it to open the message. It
   reads Notification Center's database, so it needs Full Disk Access, and keeps only the links.
+- **Answered**: when you take care of something that needed you in Azure DevOps (you vote, reply, or
+  push the changes someone asked for), it moves to Answered, for example "You approved · Dana sent
+  this in Teams", instead of disappearing into Idle. It stays until you've seen it in the panel, or
+  for a day.
 - Releases are signed with the project's own certificate rather than ad hoc, so macOS keeps the
   access you give ADO Pulse when you update it.
 

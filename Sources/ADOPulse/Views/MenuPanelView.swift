@@ -11,7 +11,7 @@ struct MenuPanelView: View {
     @LocalState private var showIdle = false
 
     private static let maxListHeight: CGFloat = 560
-    private static let shownGroups: [PRGroup] = [.needsYou, .failing, .ready, .toReview, .waiting, .done]
+    private static let shownGroups: [PRGroup] = [.needsYou, .answered, .failing, .ready, .toReview, .waiting, .done]
 
     var body: some View {
         VStack(spacing: 0) {
@@ -142,6 +142,7 @@ struct MenuPanelView: View {
                 Text("\(group.title) (\(items.count))")
                     .font(.system(size: 11, weight: .semibold))
                     .foregroundStyle(group.color)
+                    .help(group == .answered ? "You took care of these in Azure DevOps. Once you've seen them here, they go back to their usual group." : "")
                 Spacer()
                 if group == .needsYou || group == .done {
                     Button(group == .needsYou ? "Mark as Seen" : "Clear") { store.clear(group) }

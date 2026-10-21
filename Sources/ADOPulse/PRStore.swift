@@ -57,6 +57,9 @@ final class PRStore: ObservableObject {
     private var chatMonitor: ChatLinkMonitor?
     /// Set when you turn the feature on, so the setup window opens if access is missing.
     private var setUpChatAccessWhenNeeded = false
+    /// What the open panel has shown in Answered, and when you answered each: seen once the panel closes.
+    private var answeredInPanel: [PRKey: Date] = [:]
+    private var isPanelOpen = false
     private var isOnline = true
     private var cancellables: Set<AnyCancellable> = []
 
@@ -325,6 +328,27 @@ final class PRStore: ObservableObject {
         refresh()
     }
 
+    /// The panel opened: what it shows in Answered counts as seen once it closes.
+    func panelDidOpen() {
+        isPanelOpen = true
+        noteAnsweredInPanel()
+    }
+
+    /// The panel closed: what it showed in Answered goes back to its usual group. Each is seen up to when you
+    /// answered it, not up to now, so whatever came after still counts as new.
+    func panelDidClose() {
+        isPanelOpen = false
+        let shown = answeredInPanel
+        answeredInPanel = [:]
+        settings.markSeen(shown.map { (key: $0.key, date: $0.value) })
+    }
+
+    private func noteAnsweredInPanel() {
+        for item in items where item.group == .answered {
+            answeredInPanel[item.key] = max(answeredInPanel[item.key] ?? .distantPast, item.since ?? now)
+        }
+    }
+
     /// Opens the pull request (at the comment that needs you) and marks it seen.
     func open(_ item: PRSnapshot) {
         settings.markSeen([item.key], at: max(Date(), item.events.map(\.at).max() ?? .distantPast))
@@ -420,6 +444,7 @@ final class PRStore: ObservableObject {
         let sorted = PROrdering.sorted(resolved)
         self.now = now
         if sorted != items { items = sorted }
+        if isPanelOpen { noteAnsweredInPanel() }
         let newCounts = GroupCounts(sorted)
         if newCounts != counts {
             counts = newCounts
