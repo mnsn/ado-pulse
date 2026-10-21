@@ -375,6 +375,37 @@ private func waitFor(_ what: String, timeout: Duration = .seconds(10), until con
 }
 
 @Suite struct LinkedPullRequestEngineTests {
+    @Test func readsEveryPullRequestYouWereSentInTurn() async throws {
+        let server = StubServer()
+        server.serveOrganization()
+        let numbers = Array(101...112)
+        for number in numbers {
+            server.on("/contoso/_apis/git/pullrequests/\(number)", json: Fixture.pullRequest(number, author: People.alex))
+        }
+        let engine = PulseEngine(client: server.client(), configuration: PulseEngine.Configuration(organizations: [Fixture.org])) { _ in }
+        await engine.setLinkedPullRequests(Set(numbers.map { PRKey(Fixture.org, $0) }))
+        await engine.refreshNow()
+        #expect(await engine.currentSnapshot().records.count == 10)
+        // The next refresh reads the two left first, and keeps the others as they were read.
+        await engine.refreshNow()
+        #expect(await engine.currentSnapshot().records.map(\.id.number) == numbers)
+    }
+
+    @Test func readsThemWithoutOrganizationsToWatch() async throws {
+        let server = StubServer()
+        server.on("/contoso/_apis/connectionData", json: ["authenticatedUser": ["id": Fixture.me.uppercased()]])
+        server.on("/contoso/_apis/git/pullrequests/8", json: Fixture.pullRequest(8, author: People.alex))
+        server.on("/_apis/policy/evaluations", json: Fixture.list([]))
+        server.on("/threads", json: Fixture.list([]))
+        let engine = PulseEngine(client: server.client(), configuration: PulseEngine.Configuration(organizations: [])) { _ in }
+        await engine.setLinkedPullRequests([PRKey(Fixture.org, 8)])
+        await engine.refreshNow()
+        let snapshot = await engine.currentSnapshot()
+        #expect(snapshot.records.map(\.id.number) == [8])
+        #expect(snapshot.records.first?.role == .linked)
+        #expect(snapshot.problem == nil)
+    }
+
     @Test func readsAPullRequestYouWereSentByItsID() async throws {
         let server = StubServer()
         server.serveOrganization(mine: [Fixture.pullRequest(1)])

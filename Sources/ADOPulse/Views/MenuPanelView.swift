@@ -86,7 +86,8 @@ struct MenuPanelView: View {
                 .help("Allow notifications for ADO Pulse in System Settings › Notifications, or turn Notifications off in its settings")
             }
 
-            if store.mode == .live && settings.organizations.isEmpty {
+            // Without organizations to watch, pull requests people sent you may still be listed.
+            if store.mode == .live && settings.organizations.isEmpty && store.items.isEmpty {
                 OrganizationsPlaceholder()
             } else if store.isLoading && store.problem == nil {
                 VStack(spacing: 6) {

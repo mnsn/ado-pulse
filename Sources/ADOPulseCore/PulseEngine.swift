@@ -148,6 +148,8 @@ public actor PulseEngine {
     private var linkedKeys: Set<PRKey> = []
     /// Linked pull requests that couldn't be read or are closed, and when, to try again only an hour later.
     private var linkedFailures: [PRKey: Date] = [:]
+    /// Linked pull requests as last read, and when: kept between refreshes, which read only a few each.
+    private var linked: [PRKey: (listed: Listed, readAt: Date)] = [:]
     private var active: [PRKey: Listed] = [:]
     private var done: [PRKey: PullRequest] = [:]
     private var details: [PRKey: PRDetails] = [:]
@@ -226,6 +228,7 @@ public actor PulseEngine {
         let added = !keys.subtracting(linkedKeys).isEmpty
         linkedKeys = keys
         linkedFailures = linkedFailures.filter { keys.contains($0.key) }
+        linked = linked.filter { keys.contains($0.key) }
         if added { waker.wake() }
     }
 
@@ -237,7 +240,8 @@ public actor PulseEngine {
     public func refreshNow() async {
         let configuration = self.configuration
         let organizations = configuration.organizations
-        guard !organizations.isEmpty else {
+        // Pull requests people sent you are read even without organizations to watch.
+        guard !organizations.isEmpty || !linkedKeys.isEmpty else {
             problem = .noOrganizations
             hasLoaded = true
             publish()
@@ -384,14 +388,16 @@ public actor PulseEngine {
         }
     }
 
-    /// Reads the pull requests people sent you that aren't in your lists (a few each refresh), and lists the
-    /// open ones. One you can't read is tried again an hour later.
+    /// Reads the pull requests people sent you that aren't in your lists, ten a refresh: the ones never read
+    /// first, then the ones read longest ago. Each stays listed as it was last read in between. One that's closed
+    /// or couldn't be read is tried again an hour later.
     private func addLinked(to listed: inout [PRKey: Listed], at date: Date) async {
-        let wanted = linkedKeys
-            .filter { listed[$0] == nil }
+        let wanted = linkedKeys.filter { listed[$0] == nil }
+        linked = linked.filter { wanted.contains($0.key) }
+        let due = wanted
             .filter { linkedFailures[$0].map { date.timeIntervalSince($0) > 3_600 } ?? true }
-            .sorted()
-        for key in wanted.prefix(10) {
+            .sorted { (linked[$0]?.readAt ?? .distantPast, $0) < (linked[$1]?.readAt ?? .distantPast, $1) }
+        for key in due.prefix(10) {
             do {
                 let me: String
                 if let known = identities[key.organization] {
@@ -405,13 +411,20 @@ public actor PulseEngine {
                 let pr = PullRequest(organization: key.organization, dto)
                 // A closed one is read again an hour later too, in case it's reopened.
                 linkedFailures[key] = pr.status == .active ? nil : date
-                guard pr.status == .active, linkedKeys.contains(key) else { continue }
+                guard pr.status == .active, linkedKeys.contains(key) else {
+                    linked[key] = nil
+                    continue
+                }
                 let role: PRRole = pr.author.id == me ? .author : pr.reviewer(me) != nil ? .reviewer : .linked
-                listed[key] = Listed(pullRequest: pr, role: role)
+                linked[key] = (Listed(pullRequest: pr, role: role), date)
             } catch {
                 linkedFailures[key] = date
+                // Gone, or no access: nothing to list. Otherwise it stays as last read.
+                if case .notFound = error as? ADOError { linked[key] = nil }
+                if case .forbidden = error as? ADOError { linked[key] = nil }
             }
         }
+        for (key, read) in linked { listed[key] = read.listed }
     }
 
     private func forgetAccount() {
@@ -424,6 +437,7 @@ public actor PulseEngine {
         entries = [:]
         vanished = [:]
         linkedFailures = [:]
+        linked = [:]
     }
 
     /// Fetches details a few pull requests at a time. Returns the error if Azure DevOps asked to slow down.
