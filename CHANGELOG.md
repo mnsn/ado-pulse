@@ -5,13 +5,15 @@
 Fixes:
 
 - A pull request in a project whose policies you can't read no longer shows as ready to complete;
-  it waits, as "Can't read its policies". Nor does one whose policies haven't been read again since
-  its latest push or vote.
+  it waits, as "Can't read its policies", even when its threads couldn't be read either. Nor does
+  one whose policies haven't been read again since its latest push or vote.
 - A vote from a reviewer who was removed from a pull request no longer keeps it in Needs You.
 - A notification opens the comment it's about, rather than the one the panel would.
-- Abandoned pull requests reach Done even when many leave the list at once, or looking one up fails.
+- Abandoned pull requests reach Done even when many leave the list at once, or looking some up keeps
+  failing.
 - Signing in to the Azure CLI as someone else shows their pull requests, rather than the first
-  person's.
+  person's, with what they've seen: what one account has seen no longer hides what's new for another
+  on the same pull request.
 - Starting ADO Pulse while offline no longer leaves it with no organizations to watch: it tries
   again.
 - A run of the Azure CLI can't hang refreshes: what it leaves running is ended.

@@ -12,7 +12,7 @@ The GUID is Azure DevOps's application ID. The CLI answers silently from its own
 refreshes its sign-in by itself, so ADO Pulse never shows a sign-in screen unless the CLI is signed
 out. A token lasts about an hour; ADO Pulse reuses it until five minutes before it expires, and asks
 again if Azure DevOps rejects it. The token also says who it's for: when you sign in to the CLI as
-someone else, ADO Pulse starts over with their pull requests.
+someone else, ADO Pulse starts over with their pull requests, and what they've seen.
 
 An app started from Finder or as a login item doesn't get your shell's `PATH`, so ADO Pulse looks
 for `az` in `/opt/homebrew/bin`, `/usr/local/bin` and the other usual places, then asks your login
@@ -35,7 +35,7 @@ All requests are GETs to the Azure DevOps REST API (version 7.1):
 | `_apis/git/pullrequests?searchCriteria.creatorId=…&status=completed&minTime=…` | every refresh | yours completed in the Done window |
 | `{project}/_apis/policy/evaluations?artifactId=vstfs:///CodeReview/CodeReviewId/{project}/{id}` | per pull request | builds, status checks, reviewer and other policies |
 | `{project}/_apis/git/repositories/{repo}/pullRequests/{id}/threads` | per pull request | comment threads, and activity: pushes, votes, reviewer changes |
-| `_apis/git/pullrequests/{id}` | when one of yours leaves the active list: five a refresh, again until it works | whether it was completed or abandoned |
+| `_apis/git/pullrequests/{id}` | when one of yours leaves the active list: five a refresh, the ones not looked up yet first; one that fails is tried again on the next refresh, then less and less often | whether it was completed or abandoned |
 | `app.vssps.visualstudio.com/_apis/profile/profiles/me`, `…/_apis/accounts` | finding your organizations | your organizations; then each one is checked for your pull requests, and when none were found because some couldn't be checked (offline, say), it tries again a minute later |
 
 The list endpoints have no "last updated" field, and new comments don't change anything in them,
@@ -75,8 +75,8 @@ The [groups table in the README](../README.md#what-the-groups-mean) lists them. 
 
 Only blocking policies count. A disabled policy is ignored. When a project doesn't let you read its
 policies, nobody can tell whether a pull request there is ready: it waits, as **Can't read its
-policies**. And ready means ready as the pull request is now: until its policies have been read
-again after a push or a vote, it waits.
+policies**, even when its threads couldn't be read that time. And ready means ready as the pull
+request is now: until its policies have been read again after a push or a vote, it waits.
 
 **Your pull requests** are, in order: in **Needs You** if something new needs you; **Idle** if
 they're drafts or have had no activity (comments, pushes, votes) for two weeks; **Failing** for a
@@ -93,7 +93,9 @@ you asked the author for changes.
 Azure DevOps has no read or unread state for pull requests, so ADO Pulse keeps its own
 (`SeenState`): activity up to a pull request's cutoff counts as seen. The cutoff is when you last
 opened the pull request from ADO Pulse (or clicked **Mark as Seen**), or, if that's earlier, three
-days before ADO Pulse first ran.
+days before ADO Pulse first ran. Each account you sign in to the Azure CLI with has its own, since
+two accounts can see the same pull request: switching back to an account picks up where it left off,
+and nothing from the other account is announced.
 
 After the cutoff, these need you:
 
