@@ -165,6 +165,37 @@ import Testing
     }
 
     @Test(.timeLimit(.minutes(1)))
+    func nothingArrivesOnceStopped() async throws {
+        let link = ChatLink(link: PullRequestLink(organization: "contoso", project: "Shop", repository: "web", number: 7),
+                            app: Chats.teams, sender: "Dana Whitfield", sentAt: t(0), notificationKey: "n1")
+        func run(stopping: Bool) async throws -> Int {
+            // A read that's under way, held until the test lets it finish.
+            let reading = DispatchSemaphore(value: 0)
+            let finish = DispatchSemaphore(value: 0)
+            let delivery = DispatchQueue(label: "test.delivery")
+            let delivered = Locked(0)
+            let monitor = ChatLinkMonitor(database: URL(fileURLWithPath: "/nonexistent/db"), deliverOn: delivery, scan: { _ in
+                reading.signal()
+                finish.wait()
+                return ChatLinkMonitor.Snapshot(access: .granted, links: [link])
+            }) { _ in delivered.increment() }
+            monitor.start()
+            await withCheckedContinuation { continuation in
+                DispatchQueue.global().async { reading.wait(); continuation.resume() }
+            }
+            // Turned off where it delivers, as the app does on the main thread, while the read is under way.
+            if stopping { delivery.sync { monitor.stop() } }
+            finish.signal()
+            try await Task.sleep(for: .milliseconds(200))
+            delivery.sync {}
+            if !stopping { monitor.stop() }
+            return delivered.value
+        }
+        #expect(try await run(stopping: false) == 1)
+        #expect(try await run(stopping: true) == 0)
+    }
+
+    @Test(.timeLimit(.minutes(1)))
     func picksUpNewNotificationsAsTheyArrive() async throws {
         let directory = try makeTemporaryDirectory()
         defer { try? FileManager.default.removeItem(at: directory) }
@@ -174,7 +205,9 @@ import Testing
         try db.add(NotificationRecord.data(app: Chats.slack, title: "Sam Rivera", body: "Hi", date: t(0)), app: Chats.slack, delivered: t(0))
 
         let latest = Mutex<ChatLinkMonitor.Snapshot?>(nil)
-        let monitor = ChatLinkMonitor(database: url, debounce: 0.05) { snapshot in latest.withLock { $0 = snapshot } }
+        let monitor = ChatLinkMonitor(database: url, debounce: 0.05, deliverOn: DispatchQueue(label: "test")) { snapshot in
+            latest.withLock { $0 = snapshot }
+        }
         monitor.start()
         defer { monitor.stop() }
         try await waitFor("the first read") { latest.withLock { $0?.access == .granted } }

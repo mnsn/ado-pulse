@@ -1,10 +1,12 @@
 import Foundation
+import Synchronization
 
 /// Watches Notification Center's database for pull request links in new notifications. It checks for
 /// access, reads every stored notification (a short read-only read), and reads again whenever the
 /// database's write-ahead log changes (kqueue, debounced) and once a minute in case a change was missed.
 ///
-/// All mutable state is confined to `queue`; `onChange` is called on that queue.
+/// All mutable state is confined to `queue`. `onChange` is called on the delivery queue, and never once `stop()`
+/// has returned there, even for a read that was under way.
 public final class ChatLinkMonitor: @unchecked Sendable {
     public struct Snapshot: Sendable, Equatable {
         public var access: AccessStatus
@@ -24,7 +26,11 @@ public final class ChatLinkMonitor: @unchecked Sendable {
 
     public let database: URL
     private let queue = DispatchQueue(label: "ADOPulse.ChatLinkMonitor", qos: .utility)
+    private let delivery: DispatchQueue
+    private let scan: @Sendable (URL) -> Snapshot
     private let onChange: ChangeHandler
+    /// Set by `stop()` at once, rather than on `queue`, so what a read in progress finds isn't delivered.
+    private let stopped = Mutex(false)
     private let debounce: TimeInterval
     private var watcher: FileWriteWatcher?
     private var timer: DispatchSourceTimer?
@@ -33,9 +39,15 @@ public final class ChatLinkMonitor: @unchecked Sendable {
     private var fastAccessChecks = false
     private var lastPublished: Snapshot?
 
-    public init(database: URL = NotificationCenterDatabase.defaultURL(), debounce: TimeInterval = 0.5, onChange: @escaping ChangeHandler) {
+    /// `scan` reads the database; tests replace it.
+    public init(
+        database: URL = NotificationCenterDatabase.defaultURL(), debounce: TimeInterval = 0.5, deliverOn delivery: DispatchQueue = .main,
+        scan: @escaping @Sendable (URL) -> Snapshot = { ChatLinkMonitor.scanOnce(database: $0) }, onChange: @escaping ChangeHandler
+    ) {
         self.database = database
         self.debounce = debounce
+        self.delivery = delivery
+        self.scan = scan
         self.onChange = onChange
     }
 
@@ -51,7 +63,9 @@ public final class ChatLinkMonitor: @unchecked Sendable {
         }
     }
 
+    /// Stops for good. Called on the delivery queue, nothing is delivered after it returns.
     public func stop() {
+        stopped.withLock { $0 = true }
         queue.async { [self] in
             isActive = false
             watcher?.cancel()
@@ -117,13 +131,17 @@ public final class ChatLinkMonitor: @unchecked Sendable {
     }
 
     private func read() {
-        let snapshot = Self.scanOnce(database: database)
+        let snapshot = scan(database)
         if snapshot.access == .granted {
             // The log may have been replaced (a checkpoint, Notification Center restarting).
             watcher?.rearm()
         }
         guard snapshot != lastPublished else { return }
         lastPublished = snapshot
-        onChange(snapshot)
+        delivery.async { [self] in
+            // Stopped since this read began, when the feature was turned off: what it found doesn't count.
+            guard !stopped.withLock({ $0 }) else { return }
+            onChange(snapshot)
+        }
     }
 }

@@ -211,11 +211,15 @@ final class PRStore: ObservableObject {
         guard mode == .live else { return }
         if settings.chatLinksEnabled {
             guard chatMonitor == nil else { return }
-            let monitor = ChatLinkMonitor { [weak self] snapshot in
-                DispatchQueue.main.async {
-                    MainActor.assumeIsolated { self?.receiveChats(snapshot) }
+            // Delivered on the main thread, where turning the feature off stops it: nothing it read before arrives after.
+            var current: ChatLinkMonitor?
+            let monitor = ChatLinkMonitor(deliverOn: .main) { [weak self] snapshot in
+                MainActor.assumeIsolated {
+                    guard let self, let current, self.chatMonitor === current, self.settings.chatLinksEnabled else { return }
+                    self.receiveChats(snapshot)
                 }
             }
+            current = monitor
             chatMonitor = monitor
             monitor.start()
             Log.app.info("Looking for pull requests sent in chats")
