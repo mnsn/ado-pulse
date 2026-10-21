@@ -125,6 +125,11 @@ public struct PRSnapshot: Sendable, Codable, Equatable, Identifiable {
 
     /// Events that need you, rather than news such as approvals.
     public var pendingEvents: [PREvent] { events.filter(\.kind.needsYou) }
+
+    /// The pull request's page, scrolled to a comment thread when there's one.
+    public func pageURL(thread: Int? = nil) -> URL {
+        ADOEndpoint.pullRequestPage(organization: key.organization, project: project, repository: repository, id: key.number, threadId: thread)
+    }
 }
 
 public struct ClassifierOptions: Sendable, Equatable {

@@ -227,17 +227,21 @@ final class PRStore: ObservableObject {
 
     /// Opens the pull request (at the comment that needs you) and marks it seen.
     func open(_ item: PRSnapshot) {
-        settings.markSeen([item.key], at: max(Date(), item.events.map(\.at).max() ?? .distantPast))
+        markSeen(item)
         AzureDevOps.open(item.url)
     }
 
-    /// Opens a pull request from a notification, and marks it seen like a click in the panel.
+    /// Opens what a notification is about (its own comment, rather than the one the panel would open), and marks
+    /// the pull request seen like a click in the panel.
     func openFromNotification(key: String?, url: URL) {
         if let item = items.first(where: { $0.key.description == key }) {
-            open(item)
-        } else {
-            AzureDevOps.open(url)
+            markSeen(item)
         }
+        AzureDevOps.open(url)
+    }
+
+    private func markSeen(_ item: PRSnapshot) {
+        settings.markSeen([item.key], at: max(Date(), item.events.map(\.at).max() ?? .distantPast))
     }
 
     /// Marks a group's pull requests seen: Needs You moves on, Done empties. Each is seen up to what the panel

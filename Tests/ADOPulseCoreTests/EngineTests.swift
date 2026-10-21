@@ -80,6 +80,19 @@ import Testing
         #expect(NotificationPlanner.plan(previous: after, current: after, notBefore: t(0)).isEmpty)
     }
 
+    @Test func eachEventLinksToItsOwnThread() {
+        // The pull request's own link goes to the mention; the reply's notification goes to the reply.
+        let mention = PREvent(id: "c2.1", kind: .mention, at: t(20), actor: "Priya Shah", text: "@Robin Diaz?", threadId: 2)
+        let vote = PREvent(id: "v3", kind: .changesRequested, at: t(15), actor: "Alex Kim")
+        var item = snapshot(1, group: .needsYou, reason: .mentioned, events: [mention, reply, vote])
+        item.url = item.pageURL(thread: 2)
+        let notes = NotificationPlanner.plan(previous: [snapshot(1, group: .waiting)], current: [item], notBefore: t(0))
+        let links = Dictionary(uniqueKeysWithValues: notes.map { ($0.title, $0.url?.absoluteString) })
+        #expect(links["Priya Shah mentioned you"] == item.pageURL(thread: 2).absoluteString)
+        #expect(links["Sam Rivera replied"] == item.pageURL(thread: 1).absoluteString)
+        #expect(links["Alex Kim is waiting for you"] == "https://dev.azure.com/contoso/Shop/_git/shop-web/pullrequest/1")
+    }
+
     @Test func oldEventsArentAnnounced() {
         let after = [snapshot(1, group: .needsYou, events: [reply])]
         #expect(NotificationPlanner.plan(previous: [], current: after, notBefore: t(11)).isEmpty)
