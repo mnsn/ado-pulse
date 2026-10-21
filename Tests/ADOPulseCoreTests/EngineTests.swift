@@ -53,6 +53,37 @@ import Testing
         let data = try? JSONEncoder().encode(seen)
         #expect(data.flatMap { try? JSONDecoder().decode(SeenState.self, from: $0) } == seen)
     }
+
+    @Test func eachAccountHasSeenItsOwn() throws {
+        let key = PRKey("contoso", 1)
+        // Saved before ADO Pulse told accounts apart: it becomes the account signed in now's.
+        let saved = Data(#"{"baseline": 0, "seenAt": {"contoso/1": 864000}}"#.utf8)
+        var book = SeenBook(current: try JSONDecoder().decode(SeenState.self, from: saved))
+        #expect(book.current.account == nil)
+        var switched = book.signIn("tenant/robin", now: t(20 * day))
+        #expect(!switched)
+        #expect(book.current.account == "tenant/robin")
+        #expect(book.current.cutoff(for: key) == Date(timeIntervalSinceReferenceDate: 864_000))
+
+        // Sam signs in: a first run of their own, with Robin's kept.
+        book.current.markSeen([key], at: t(10 * day))
+        switched = book.signIn("tenant/sam", now: t(20 * day))
+        #expect(switched)
+        #expect(book.current == SeenState.firstRun(now: t(20 * day), account: "tenant/sam"))
+        #expect(book.state(for: "tenant/robin").cutoff(for: key) == t(10 * day))
+        #expect(book.state(for: "tenant/sam") == book.current)
+        #expect(book.state(for: nil) == book.current)
+        switched = book.signIn("tenant/sam", now: t(30 * day))
+        #expect(!switched)
+
+        // Robin again: Robin's, and Sam's kept.
+        book.current.markSeen([key], at: t(25 * day))
+        switched = book.signIn("tenant/robin", now: t(30 * day))
+        #expect(switched)
+        #expect(book.current.cutoff(for: key) == t(10 * day))
+        #expect(book.others["tenant/sam"]?.cutoff(for: key) == t(25 * day))
+        #expect(book.state(for: "tenant/kim", now: t(30 * day)) == SeenState.firstRun(now: t(30 * day), account: "tenant/kim"))
+    }
 }
 
 @Suite struct NotificationTests {
@@ -433,6 +464,47 @@ import Testing
         let snapshot = await engine.currentSnapshot()
         #expect(snapshot.records.map(\.id.number) == [2])
         #expect(snapshot.records.allSatisfy { $0.me == sam })
+    }
+
+    @Test func whatOneAccountHasSeenDoesntHideWhatsNewForAnother() async throws {
+        let now = Date()
+        let server = StubServer()
+        let tokens = server.tokens
+        await tokens.signIn(as: "tenant/robin")
+        // Robin's pull request, which Sam reviews, and Robin's comment for Sam an hour ago.
+        let pr = Fixture.pullRequest(1, reviewers: [Fixture.reviewer(People.sam)], created: now.addingTimeInterval(-day))
+        server.serveOrganization(mine: [pr])
+        server.on("/threads", json: Fixture.list([
+            Fixture.thread(7, comments: [Fixture.comment(1, People.me, "Over to you @<\(People.sam.id)>", at: now.addingTimeInterval(-hour))],
+                           published: now.addingTimeInterval(-hour)),
+        ]))
+        let engine = engine(server, tokens: tokens)
+        await engine.refreshNow()
+        #expect(await engine.currentSnapshot().account == "tenant/robin")
+
+        // Robin opens it from ADO Pulse.
+        var book = SeenBook(current: .firstRun(now: now))
+        book.signIn("tenant/robin", now: now)
+        book.current.markSeen([PRKey(Fixture.org, 1)], at: now)
+
+        // Then Sam signs in to the Azure CLI on the same Mac, and sees the same pull request.
+        server.serveOrganization(me: People.sam.id, reviewing: [pr])
+        await tokens.signIn(as: "tenant/sam")
+        await engine.refreshNow()
+        let snapshot = await engine.currentSnapshot()
+        #expect(snapshot.account == "tenant/sam")
+        let record = try #require(snapshot.records.first)
+        #expect(record.id == PRKey(Fixture.org, 1))
+        #expect(record.role == .reviewer && record.me == People.sam.id)
+
+        // What Robin has seen would hide the comment for Sam.
+        func group(_ seen: SeenState) -> PRGroup? {
+            PRClassifier.snapshot(for: record, seenCutoff: seen.cutoff(for: record.id), now: now)?.group
+        }
+        #expect(group(book.current) != .needsYou)
+        let switched = book.signIn("tenant/sam", now: now)
+        #expect(switched)
+        #expect(group(book.current) == .needsYou)
     }
 
     @Test func keepsLookingUpPullRequestsThatLeftTheList() async throws {

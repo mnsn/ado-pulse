@@ -84,9 +84,15 @@ enum CLI {
         )
     }
 
-    private static func seenState() -> SeenState {
-        appDefaults?.data(forKey: SettingsKey.seen).flatMap { try? JSONDecoder().decode(SeenState.self, from: $0) }
-            ?? SeenState.firstRun()
+    /// What the app's accounts have seen.
+    private static func seenBook() -> SeenBook {
+        let decoder = JSONDecoder()
+        return SeenBook(
+            current: appDefaults?.data(forKey: SettingsKey.seen).flatMap { try? decoder.decode(SeenState.self, from: $0) }
+                ?? SeenState.firstRun(),
+            others: appDefaults?.data(forKey: SettingsKey.otherSeen).flatMap { try? decoder.decode([String: SeenState].self, from: $0) }
+                ?? [:]
+        )
     }
 
     static func resolve(_ snapshot: PulseSnapshot, seen: SeenState, options: ClassifierOptions, now: Date = Date()) -> [PRSnapshot] {
@@ -125,7 +131,7 @@ enum CLI {
         let configuration = PulseEngine.Configuration(organizations: organizations, keepDoneFor: classifierOptions().keepDoneFor)
         let snapshot = wait { await PulseEngine.loadOnce(client: client, configuration: configuration) }
         return Loaded(
-            organizations: organizations, items: resolve(snapshot, seen: seenState(), options: classifierOptions()),
+            organizations: organizations, items: resolve(snapshot, seen: seenBook().state(for: snapshot.account), options: classifierOptions()),
             problem: snapshot.problem?.message
         )
     }
@@ -212,7 +218,7 @@ enum CLI {
         setvbuf(stdout, nil, _IOLBF, 0)
         print("Watching \(DemoData.organization), made-up pull requests")
         let now = Date()
-        let printer = WatchPrinter(seen: DemoData.seenState(now: now), options: ClassifierOptions())
+        let printer = WatchPrinter(seen: SeenBook(current: DemoData.seenState(now: now)), options: ClassifierOptions())
         let snapshot = DemoData.snapshot(now: now)
         printer.print(snapshot)
         Thread.sleep(forTimeInterval: 1)
@@ -225,7 +231,7 @@ enum CLI {
         let organizations = options.organizations.isEmpty
             ? appDefaults?.stringArray(forKey: SettingsKey.organizations) ?? []
             : options.organizations
-        let printer = WatchPrinter(seen: seenState(), options: classifierOptions())
+        let printer = WatchPrinter(seen: seenBook(), options: classifierOptions())
         let queue = DispatchQueue(label: "ADOPulse.watch")
         let engine = PulseEngine(
             client: ADOClient(tokens: AzureCLITokenProvider()), configuration: PulseEngine.Configuration(organizations: organizations)
@@ -255,7 +261,7 @@ enum CLI {
 
 /// Prints only the pull requests whose status changed. Confined to the watch queue.
 private final class WatchPrinter: @unchecked Sendable {
-    private let seen: SeenState
+    private var seen: SeenBook
     private let options: ClassifierOptions
     private var problem: String?
     private var previous: [String: PRSnapshot] = [:]
@@ -265,7 +271,7 @@ private final class WatchPrinter: @unchecked Sendable {
         return formatter
     }()
 
-    init(seen: SeenState, options: ClassifierOptions) {
+    init(seen: SeenBook, options: ClassifierOptions) {
         self.seen = seen
         self.options = options
     }
@@ -278,7 +284,9 @@ private final class WatchPrinter: @unchecked Sendable {
             problem = message
             if let message { Swift.print("\(formatter.string(from: now))  ! \(message)") }
         }
-        for item in CLI.resolve(snapshot, seen: seen, options: options, now: now) {
+        // Once, so an account's first run starts when it was first seen.
+        if let account = snapshot.account { seen.signIn(account, now: now) }
+        for item in CLI.resolve(snapshot, seen: seen.current, options: options, now: now) {
             let old = previous[item.id]
             previous[item.id] = item
             guard old == nil || old?.group != item.group || old?.headline != item.headline || old?.detail != item.detail else { continue }

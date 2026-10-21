@@ -95,7 +95,10 @@ final class AppSettings: ObservableObject {
     @Published var hasDiscovered: Bool {
         didSet { defaults.set(hasDiscovered, forKey: Key.hasDiscovered) }
     }
+    /// What the account signed in now has seen.
     @Published private(set) var seen: SeenState
+    /// What the other accounts you've signed in with have seen.
+    private var otherSeen: [String: SeenState]
 
     init(defaults: UserDefaults = .standard, now: Date = Date()) {
         self.defaults = defaults
@@ -112,6 +115,7 @@ final class AppSettings: ObservableObject {
         knownOrganizations = defaults.stringArray(forKey: Key.knownOrganizations) ?? []
         hasDiscovered = defaults.bool(forKey: Key.hasDiscovered)
 
+        otherSeen = defaults.data(forKey: Key.otherSeen).flatMap { try? JSONDecoder().decode([String: SeenState].self, from: $0) } ?? [:]
         if let data = defaults.data(forKey: Key.seen), let stored = try? JSONDecoder().decode(SeenState.self, from: data) {
             seen = stored
         } else {
@@ -162,9 +166,25 @@ final class AppSettings: ObservableObject {
         persistSeen()
     }
 
-    /// Replaces the seen state, for the demo.
-    func useSeenState(_ state: SeenState) {
+    /// Replaces the seen state, for the demo and for pictures.
+    func useSeenState(_ state: SeenState, others: [String: SeenState] = [:]) {
+        otherSeen = others
         seen = state
+    }
+
+    /// Switches what you've seen to the account signed in now, keeping the last one's for when it's back. Returns
+    /// whether another account was signed in before.
+    func useAccount(_ account: String, now: Date = Date()) -> Bool {
+        var book = SeenBook(current: seen, others: otherSeen)
+        let switched = book.signIn(account, now: now)
+        guard book.current != seen else { return switched }
+        otherSeen = book.others
+        seen = book.current
+        persistSeen()
+        if let data = try? JSONEncoder().encode(otherSeen) {
+            defaults.set(data, forKey: Key.otherSeen)
+        }
+        return switched
     }
 
     /// Organization names are case-insensitive in Azure DevOps.
@@ -202,4 +222,5 @@ enum SettingsKey {
     static let knownOrganizations = "knownOrganizations"
     static let hasDiscovered = "hasDiscoveredOrganizations"
     static let seen = "seenState"
+    static let otherSeen = "otherAccountsSeenState"
 }

@@ -55,6 +55,8 @@ public enum PulseProblem: Sendable, Equatable {
 public struct PulseSnapshot: Sendable, Equatable {
     public var records: [PRRecord]
     public var organizations: [String]
+    /// Who's signed in to the Azure CLI (`AccessToken.account`), when known: the records are theirs.
+    public var account: String?
     /// Your name, as Azure DevOps knows it.
     public var userName: String?
     /// When each organization's lists were first read: what happened there before is in the panel, not news.
@@ -65,11 +67,13 @@ public struct PulseSnapshot: Sendable, Equatable {
     public var hasLoaded: Bool
 
     public init(
-        records: [PRRecord] = [], organizations: [String] = [], userName: String? = nil, firstLoaded: [String: Date] = [:],
-        problem: PulseProblem? = nil, refreshedAt: Date? = nil, isRefreshing: Bool = false, hasLoaded: Bool = false
+        records: [PRRecord] = [], organizations: [String] = [], account: String? = nil, userName: String? = nil,
+        firstLoaded: [String: Date] = [:], problem: PulseProblem? = nil, refreshedAt: Date? = nil, isRefreshing: Bool = false,
+        hasLoaded: Bool = false
     ) {
         self.records = records
         self.organizations = organizations
+        self.account = account
         self.userName = userName
         self.firstLoaded = firstLoaded
         self.problem = problem
@@ -551,7 +555,7 @@ public actor PulseEngine {
         }
         records.sort { $0.id < $1.id }
         return PulseSnapshot(
-            records: records, organizations: configuration.organizations, userName: userName, firstLoaded: firstLoaded,
+            records: records, organizations: configuration.organizations, account: account, userName: userName, firstLoaded: firstLoaded,
             problem: problem, refreshedAt: refreshedAt, isRefreshing: isRefreshing, hasLoaded: hasLoaded
         )
     }

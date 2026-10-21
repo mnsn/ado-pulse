@@ -30,7 +30,8 @@ enum Renderer {
             // Your organizations and what you've seen, so the picture matches the panel.
             settings.organizations = app.stringArray(forKey: SettingsKey.organizations) ?? []
             if let data = app.data(forKey: SettingsKey.seen), let seen = try? JSONDecoder().decode(SeenState.self, from: data) {
-                settings.useSeenState(seen)
+                let others = app.data(forKey: SettingsKey.otherSeen).flatMap { try? JSONDecoder().decode([String: SeenState].self, from: $0) }
+                settings.useSeenState(seen, others: others ?? [:])
             }
         }
         let loginItem = LoginItem()
