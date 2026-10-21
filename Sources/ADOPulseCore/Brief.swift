@@ -57,6 +57,9 @@ public enum Brief {
                     Write the update.
                     """
             }
+        case .sentInChat:
+            let app = top?.app.map { " in \($0)" } ?? ""
+            sentence = "\(actor) sent you \(title)\(app)."
         case .reviewRequested: sentence = "\(snapshot.author) asked you to review \(title)."
         case .newCommits: sentence = "\(title) has new commits since your vote."
         case .changesRequested: sentence = "\(actor) is waiting for changes on \(title)."
@@ -84,7 +87,7 @@ public enum Brief {
 
     private static func kindMatches(_ kind: PREvent.Kind, _ reason: PRReason) -> Bool {
         switch (kind, reason) {
-        case (.mention, .mentioned), (.reply, .replied), (.comment, .commented): return true
+        case (.mention, .mentioned), (.reply, .replied), (.comment, .commented), (.sentInChat, .sentInChat): return true
         default: return false
         }
     }

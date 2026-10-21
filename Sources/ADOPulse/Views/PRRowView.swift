@@ -7,6 +7,8 @@ struct PRRowView: View {
     let item: PRSnapshot
     let now: Date
     var compact = false
+    /// Opens the message it was sent in (right-click); nil when it wasn't.
+    var openSource: (() -> Void)? = nil
     var action: () -> Void
 
     @LocalState private var isHovered = false
@@ -65,6 +67,12 @@ struct PRRowView: View {
         }
         .buttonStyle(.plain)
         .onHover { isHovered = $0 }
+        .contextMenu {
+            Button("Open in Azure DevOps", action: action)
+            if let source = item.chatSource, let openSource {
+                Button(source.messageURL == nil ? "Show \(source.appName)" : "Open Message in \(source.appName)", action: openSource)
+            }
+        }
         .help(helpText)
         .accessibilityElement(children: .ignore)
         .accessibilityLabel("\(item.title), \(item.headline)")
@@ -82,6 +90,9 @@ struct PRRowView: View {
         if let detail = item.detail { lines.append(detail) }
         if !item.approvals.isEmpty && item.group != .ready { lines.append("Approved by " + item.approvals.joined(separator: ", ")) }
         lines.append("Click to open in Azure DevOps")
+        if let source = item.chatSource {
+            lines.append(source.messageURL == nil ? "Right-click to show \(source.appName)" : "Right-click to open the message in \(source.appName)")
+        }
         return lines.joined(separator: "\n")
     }
 }

@@ -2,6 +2,22 @@
 
 ## Unreleased
 
+- **Pull requests sent in chats**: turn it on, and when someone sends you a link to a pull request in
+  Teams, Slack, an email or any other app, it shows in Needs You, as "Dana sent this in Teams", until
+  you open it, vote or comment, it closes, or a week passes. Right-click it to open the message. It
+  reads Notification Center's database, so it needs Full Disk Access, and keeps only the links.
+- **Answered**: when you take care of something that needed you in Azure DevOps (you vote, reply, or
+  push the changes someone asked for), it moves to Answered, for example "You approved · Dana sent
+  this in Teams", instead of disappearing into Idle. It stays until you've seen it in the panel, or
+  for a day.
+- Releases are signed with the project's own certificate rather than ad hoc, so macOS keeps the
+  access you give ADO Pulse when you update it.
+- Building from source: `make signing-identity` creates a certificate to sign your builds with, so the
+  Full Disk Access you give them survives rebuilds. No app may use its key without asking, not even
+  codesign, and it can't be exported. Builds sign with that exact certificate, by its SHA-1, never one
+  with a name like it, and won't sign with a key that some app may use without asking (Always Allow).
+  `scripts/make-signing-identity.sh --delete` goes back to ad hoc builds.
+
 Fixes:
 
 - A pull request in a project whose policies you can't read no longer shows as ready to complete;

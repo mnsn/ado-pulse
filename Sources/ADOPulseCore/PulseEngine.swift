@@ -173,6 +173,12 @@ public actor PulseEngine {
     private var account: String?
     private var userName: String?
     private var firstLoaded: [String: Date] = [:]
+    /// Pull requests people sent you, to list even when you're not on them.
+    private var linkedKeys: Set<PRKey> = []
+    /// Linked pull requests that couldn't be read or are closed, and when, to try again only an hour later.
+    private var linkedFailures: [PRKey: Date] = [:]
+    /// Linked pull requests as last read, and when: kept between refreshes, which read only a few each.
+    private var linked: [PRKey: (listed: Listed, readAt: Date)] = [:]
     private var active: [PRKey: Listed] = [:]
     private var done: [PRKey: PullRequest] = [:]
     private var details: [PRKey: PRDetails] = [:]
@@ -228,7 +234,8 @@ public actor PulseEngine {
         self.configuration = configuration
         if organizationsChanged {
             let kept = Set(configuration.organizations)
-            active = active.filter { kept.contains($0.key.organization) }
+            // Pull requests people sent you stay, whichever organizations are watched.
+            active = active.filter { kept.contains($0.key.organization) || linked[$0.key] != nil }
             done = done.filter { kept.contains($0.key.organization) }
             vanished = vanished.filter { kept.contains($0.key.organization) }
             firstLoaded = firstLoaded.filter { kept.contains($0.key) }
@@ -238,10 +245,30 @@ public actor PulseEngine {
     }
 
     /// One load, without the timer: for the command line and tests.
-    public static func loadOnce(client: ADOClient, configuration: Configuration) async -> PulseSnapshot {
+    public static func loadOnce(client: ADOClient, configuration: Configuration, linked: Set<PRKey> = []) async -> PulseSnapshot {
         let engine = PulseEngine(client: client, configuration: configuration) { _ in }
+        await engine.setLinkedPullRequests(linked)
         await engine.refreshNow()
         return await engine.currentSnapshot()
+    }
+
+    /// Pull requests people sent you. The ones not in your lists are read by ID, and listed as `linked`.
+    public func setLinkedPullRequests(_ keys: Set<PRKey>) {
+        guard keys != linkedKeys else { return }
+        let added = !keys.subtracting(linkedKeys).isEmpty
+        linkedKeys = keys
+        linkedFailures = linkedFailures.filter { keys.contains($0.key) }
+        // The ones listed only because someone sent them go with their links, now rather than on the next refresh.
+        let gone = Set(linked.keys).subtracting(keys)
+        linked = linked.filter { keys.contains($0.key) }
+        for key in gone {
+            active[key] = nil
+            details[key] = nil
+            entries[key] = nil
+        }
+        if configuration.organizations.isEmpty && keys.isEmpty { listNothing() }
+        publish()
+        if added { waker.wake() }
     }
 
     public func currentSnapshot() -> PulseSnapshot {
@@ -252,9 +279,9 @@ public actor PulseEngine {
     public func refreshNow() async {
         let configuration = self.configuration
         let organizations = configuration.organizations
-        guard !organizations.isEmpty else {
-            problem = .noOrganizations
-            hasLoaded = true
+        // Pull requests people sent you are read even without organizations to watch.
+        guard !organizations.isEmpty || !linkedKeys.isEmpty else {
+            listNothing()
             publish()
             return
         }
@@ -378,6 +405,7 @@ public actor PulseEngine {
         completed = completed.filter { watched.contains($0.key.organization) }
         vanished = vanished.filter { watched.contains($0.key.organization) }
         firstLoaded = firstLoaded.filter { watched.contains($0.key) }
+        await addLinked(to: &listed, at: startedAt)
         active = listed
         done = completed.filter { listed[$0.key] == nil && ($0.value.closedAt ?? .distantPast) > closedSince }
         details = details.filter { listed[$0.key] != nil }
@@ -403,6 +431,57 @@ public actor PulseEngine {
         }
     }
 
+    /// Reads the pull requests people sent you that aren't in your lists, ten a refresh: the ones never read
+    /// first, then the ones read longest ago. Each stays listed as it was last read in between. One that's closed
+    /// or couldn't be read is tried again an hour later.
+    private func addLinked(to listed: inout [PRKey: Listed], at date: Date) async {
+        let wanted = linkedKeys.filter { listed[$0] == nil }
+        linked = linked.filter { wanted.contains($0.key) }
+        let due = wanted
+            .filter { linkedFailures[$0].map { date.timeIntervalSince($0) > 3_600 } ?? true }
+            .sorted { (linked[$0]?.readAt ?? .distantPast, $0) < (linked[$1]?.readAt ?? .distantPast, $1) }
+        for key in due.prefix(10) {
+            do {
+                let me: String
+                if let known = identities[key.organization] {
+                    me = known
+                } else {
+                    me = try await client.get(ADOEndpoint.connectionData(organization: key.organization), as: ADOConnectionData.self)
+                        .authenticatedUser.id.lowercased()
+                    identities[key.organization] = me
+                }
+                let dto = try await client.get(ADOEndpoint.pullRequest(organization: key.organization, id: key.number), as: ADOPullRequest.self)
+                let pr = PullRequest(organization: key.organization, dto)
+                // A closed one is read again an hour later too, in case it's reopened.
+                linkedFailures[key] = pr.status == .active ? nil : date
+                guard pr.status == .active, linkedKeys.contains(key) else {
+                    linked[key] = nil
+                    continue
+                }
+                let role: PRRole = pr.author.id == me ? .author : pr.reviewer(me) != nil ? .reviewer : .linked
+                linked[key] = (Listed(pullRequest: pr, role: role), date)
+            } catch {
+                linkedFailures[key] = date
+                // Gone, or no access: nothing to list. Otherwise it stays as last read.
+                if case .notFound = error as? ADOError { linked[key] = nil }
+                if case .forbidden = error as? ADOError { linked[key] = nil }
+            }
+        }
+        for (key, read) in linked { listed[key] = read.listed }
+    }
+
+    /// Without organizations to watch or pull requests sent to you, there's nothing to read, or to list.
+    private func listNothing() {
+        active = [:]
+        done = [:]
+        details = [:]
+        entries = [:]
+        vanished = [:]
+        linked = [:]
+        problem = .noOrganizations
+        hasLoaded = true
+    }
+
     private func forgetAccount() {
         identities = [:]
         userName = nil
@@ -412,6 +491,8 @@ public actor PulseEngine {
         details = [:]
         entries = [:]
         vanished = [:]
+        linkedFailures = [:]
+        linked = [:]
     }
 
     /// Fetches details a few pull requests at a time. Returns the error if Azure DevOps asked to slow down.

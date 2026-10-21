@@ -88,6 +88,9 @@ policies, someone approved); and **Waiting** otherwise, with what it's waiting f
 inactive, or you approved or declined them, **To Review** if you haven't voted, and **Waiting** if
 you asked the author for changes.
 
+A pull request that would be **Idle** or **Waiting** is in **Answered** instead while there's
+something you answered yourself that you haven't seen yet (see below).
+
 ## What counts as new
 
 Azure DevOps has no read or unread state for pull requests, so ADO Pulse keeps its own
@@ -109,6 +112,73 @@ After the cutoff, these need you:
   haven't voted yet, and new commits since your vote.
 
 Approvals are news too: they're announced, but they don't need you.
+
+### Answered
+
+Each of those can also be answered in Azure DevOps (`PRClassifier.answers`): a reply or mention by
+your comment after it in the same thread (on your pull request, any comment); a review request by
+your vote; new commits since your vote by voting again; a vote that wanted changes on your pull
+request by your push; and a link someone sent you by your vote, your comment or, on your pull
+request, your push. Voting on a pull request you weren't asked to review adds you as a reviewer
+yourself, which doesn't count as a request.
+
+When something that needed you after the cutoff has been answered in the last day, the pull request
+is in **Answered**, with what you did ("You approved") and what it answered ("Dana Whitfield sent
+this in Teams"), unless it's failing, ready to complete or to review. It isn't counted in the menu
+bar, announced, or in the brief. When the panel closes, each pull request it showed in Answered is
+marked seen up to when you answered it, not up to the time it closed, so anything that came later
+still counts as new.
+
+## Pull requests sent in chats
+
+When you turn on **Pull Requests Sent in Chats**, ADO Pulse reads Notification Center's database,
+`~/Library/Group Containers/group.com.apple.usernoted/db2/db`, which keeps the notifications every app
+has posted (about the latest hundred per app; for Teams, a couple of days).
+
+- It opens the database with a read-only SQLite connection, for a short read each time, and never
+  changes it. Like any SQLite reader, it takes brief shared locks and updates SQLite's shared-memory
+  index (`db-shm`) while it reads; neither changes any notification. It reads it when you turn the
+  setting on, whenever the database's write-ahead log changes (watched with kqueue, so a new message
+  shows within a second), when you open the panel, and once a minute.
+- Each notification's title, subtitle and text are searched for links to pull requests:
+  `dev.azure.com/{org}/{project}/_git/{repo}/pullrequest/{id}` and the older
+  `{org}.visualstudio.com/…/pullrequest/{id}`.
+- In Teams, only chat messages count: the notification has a reply box and names a chat. Channel
+  posts and reactions don't. The sender is the title in a 1:1 chat and comes before the colon in a
+  group chat. In other apps, the title is taken as the sender.
+- Emails from Azure DevOps itself and ADO Pulse's own notifications are skipped.
+- It keeps only the link, the app, the sender, the time and, for Teams, the chat and message IDs (to
+  open the message). Never the message itself. Links are kept for two weeks, and forgotten when you
+  turn the setting off.
+
+A pull request that isn't in your lists (you're not its author or a reviewer) is read with a GET by
+its ID, and listed only while the link needs you. A link needs you until you open the pull request
+from ADO Pulse, vote or comment on it after the message (or push to it, if it's yours), it closes,
+or a week passes. Once you've voted or commented, it's in **Answered** until you've seen that.
+Links aren't announced: the app they came in already did.
+
+macOS protects that database, so ADO Pulse needs Full Disk Access, which it asks for when you turn the
+setting on, and macOS ties that access to the app's code signature. A build from source is signed ad
+hoc, a signature that changes with every build, so access has to be allowed again after each one.
+macOS keeps the requirement of the build you allowed, and turning the switch off and on keeps it too:
+remove ADO Pulse from the list, or run `tccutil reset SystemPolicyAllFiles com.asaf.ADOPulse`, and add
+it again.
+`make signing-identity` instead creates a self-signed certificate, and builds signed with it keep the
+same designated requirement, so access survives rebuilds. It imports the certificate's key with
+`scripts/signing-key.swift`, so that no app may use it without asking, codesign and security included,
+and nothing can export it, not even an app you allow: macOS asks for your login password each time a
+build is signed. (`security import -T ""` trusts no app either, but its `-x` has no effect on a
+PKCS #12, whose key could then be exported.) A key that some app could use without asking (Always
+Allow) would let anything running as you sign its own code as ADO Pulse, and get the Full Disk Access
+you gave it, so each build first reads the key's access list, which asks nothing, and won't sign with
+such a key. The key it checks is the one it signs with: the certificate named exactly
+`ADO Pulse Signing`, given to codesign by its SHA-1 (`scripts/signing.sh`), and the build checks that
+the signature names it. Given a name, codesign would use an identity preference by that name instead,
+if there were one, or a certificate whose name merely contains it. Without a certificate named exactly
+so, builds are signed ad hoc, and with two, they aren't signed at all. Releases are signed with the
+project's own certificate, whose key the release workflow imports the same way, for codesign only, and
+signs with the same way (see "Releasing" in [CONTRIBUTING.md](../CONTRIBUTING.md)), so access survives
+updates.
 
 ## Notifications
 
@@ -137,6 +207,8 @@ widget is a borderless panel the app draws itself, at desktop level.
 
 ## Limits
 
+- Pull requests sent in chats are only as complete as Notification Center: a message you saw in the
+  app before it posted a notification, or one older than the notifications it keeps, isn't there.
 - Pull requests assigned only to a group or team you're in aren't listed: Azure DevOps's reviewer
   search matches you, not your groups.
 - Organizations in other Microsoft Entra tenants than the Azure CLI's default can't be read with its

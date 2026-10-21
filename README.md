@@ -38,6 +38,9 @@ and looks and works the same way.
   since your vote, failed builds, and pull requests that become ready or complete.
 - **One click to the comment**: click a pull request to open it in your browser, scrolled to the
   thread that needs you.
+- **Pull requests sent in chats** (if you turn it on): when someone sends you a link to a pull
+  request in Teams, Slack, an email or any other app, it needs you too, as "Dana sent this in
+  Teams". Right-click it to open the message.
 - **Desktop widget**: a widget-style panel in three sizes, on the desktop behind your windows or
   floating above them. Drag it by its header, and right-click it for settings.
 - **No token to manage**: it uses the Azure CLI's sign-in, which renews itself.
@@ -48,7 +51,8 @@ and looks and works the same way.
 
 | Group | When |
 |---|---|
-| **Needs You** | Something new you haven't seen: a reply to your comment, a mention, a comment on your pull request, a review request, new commits since your vote, or a reviewer who's waiting for you or rejected it |
+| **Needs You** | Something new you haven't seen: a reply to your comment, a mention, a comment on your pull request, a review request, new commits since your vote, a reviewer who's waiting for you or rejected it, or a link to it someone sent you (if you turned that on) |
+| **Answered** | Something that needed you that you've since taken care of in Azure DevOps, such as "You approved · Dana sent this in Teams", until you've seen it in the panel |
 | **Failing** | Your pull request has a failed build or status check, merge conflicts, or a build that expired and has to run again |
 | **Ready to Complete** | Your pull request is approved and every required policy passes (or it completes automatically) |
 | **To Review** | Review requests you've seen but haven't voted on |
@@ -60,6 +64,12 @@ and looks and works the same way.
 Seen**, moves it to its usual group until something new happens. Azure DevOps doesn't track what
 you've read, so ADO Pulse keeps that itself. The first time it runs, only the last three days count
 as new. Comments from build services and bots don't count.
+
+When you answer something in Azure DevOps instead (you vote, reply, or push the changes someone
+asked for), it moves to **Answered**, saying what you did and what it answered, so it doesn't just
+disappear. Once you've seen it there (when the panel closes), or after a day, it goes back to its
+usual group. A pull request that's failing, ready to complete, or still yours to review stays in
+that group instead.
 
 ## Install
 
@@ -100,6 +110,17 @@ make install     # builds "ADO Pulse.app", copies it to ~/Applications and launc
 Then turn on **Launch at Login** as above. To update, pull and run `make install` again; to remove
 it, run `make uninstall`.
 
+A build you make yourself is signed ad hoc, and macOS ties Full Disk Access to that exact build: if
+you use **Pull Requests Sent in Chats**, allow it again after each `make install`. Turning ADO Pulse
+off and on in the list keeps the old build's signature, so remove it with − (or run
+`tccutil reset SystemPolicyAllFiles com.asaf.ADOPulse`) and add it again with +. To keep it across
+builds, `make signing-identity` creates a certificate to sign them with. No app may use its key
+without asking, not even codesign, and it can't be exported, so macOS asks for your login password
+each time a build is signed: choose **Allow**, never Always Allow, which would let anything running
+as you sign code as ADO Pulse and get its Full Disk Access. If you did, builds won't sign with it
+until you run `scripts/make-signing-identity.sh --replace`, which makes a new one, or `--delete`, to
+go back to ad hoc.
+
 ## Signing in
 
 ADO Pulse asks the Azure CLI for an Azure DevOps token (`az account get-access-token`), the way
@@ -120,6 +141,7 @@ Open the gear menu in the menu-bar panel, or right-click the widget.
 | Notifications | on/off. If macOS blocks them, the panel offers to open System Settings |
 | Summaries by Apple Intelligence | on/off, when Apple Intelligence is available |
 | Show To Review in the Menu Bar | off by default |
+| Pull Requests Sent in Chats | off by default. Needs Full Disk Access: see [the FAQ](#how-does-it-find-pull-requests-people-send-me) |
 | Show Desktop Widget | on/off |
 | Widget Position | **On Desktop (Behind Windows)** like a real widget, or **Floating (Above Windows)** |
 | Widget Size | Compact (2 rows), Medium (4), Large (8) |
@@ -136,6 +158,10 @@ Open the gear menu in the menu-bar panel, or right-click the widget.
   `app.vssps.visualstudio.com`.
 - Summaries are written by Apple Intelligence's on-device model. ADO Pulse never uses Private Cloud
   Compute or any other model, so no comment or title leaves your Mac.
+- If you turn on **Pull Requests Sent in Chats**, ADO Pulse reads the notifications that macOS keeps
+  in Notification Center, from every app, to find links to pull requests. It keeps only the links,
+  with who sent them, in which app and when, never the messages, and sends nothing anywhere. Turning
+  it off forgets them.
 - It stores its settings, and when you last opened each pull request from it, in its preferences on
   your Mac. It collects no data and sends nothing anywhere else.
 
@@ -149,6 +175,25 @@ lists, plus two for each pull request whose details it refreshes. New and change
 refreshed right away, the rest every few minutes (drafts and idle ones less often). That's about
 10 to 25 small requests a minute. It also refreshes when you open the panel, when your Mac wakes,
 and when it's back online. [How it works](docs/how-it-works.md) has the details.
+
+### How does it find pull requests people send me?
+
+When you turn on **Pull Requests Sent in Chats**, ADO Pulse looks for links to Azure DevOps pull
+requests in the notifications macOS keeps in Notification Center: Teams, Slack, Outlook, Mail or any
+other app's. It doesn't need Teams or any other app to cooperate. In Teams, only chat messages count,
+not channel posts or reactions, and emails from Azure DevOps itself don't count.
+
+macOS protects Notification Center's database, so ADO Pulse needs **Full Disk Access**. It shows you
+how to grant it when you turn the setting on. A pull request someone sent you needs you until you
+open it from ADO Pulse, vote or comment on it, it closes, or a week goes by. If you vote or comment,
+it moves to **Answered** until you've seen it in the panel. Notification Center
+keeps only the latest hundred or so notifications per app, so ADO Pulse remembers the links it finds
+(only the links, as described in [Privacy](#privacy)).
+
+macOS ties Full Disk Access to the app's signature. Every release is signed with the same
+certificate, so updating keeps it. A copy you build yourself is signed ad hoc, so you allow each new
+build again, unless you sign your builds with `make signing-identity` (see
+[Build from source](#build-from-source)).
 
 ### Why isn't a pull request assigned to my team shown?
 
@@ -165,8 +210,8 @@ which build failed. Click the pull request to see it.
 Notarization needs a paid Apple Developer Program membership, which this free project doesn't
 have. So macOS asks you to allow the app the first time you open it, as described in
 [Install](#install). Each release is built from its tagged source by
-[GitHub Actions](.github/workflows/release.yml), with an attestation you can
-[verify](SECURITY.md#verifying-a-download). You can also build it yourself.
+[GitHub Actions](.github/workflows/release.yml) and signed with the project's own certificate, with
+an attestation you can [verify](SECURITY.md#verifying-a-download). You can also build it yourself.
 
 ### How do I troubleshoot it?
 

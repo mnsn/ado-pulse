@@ -1,4 +1,4 @@
-.PHONY: build test app package install uninstall run demo dump watch render icon demo-check screenshots clean
+.PHONY: build test app package install uninstall run demo dump watch render icon signing-identity signing-key-check demo-check screenshots clean
 
 # With only the Command Line Tools installed, the compiler sometimes misses Swift Testing's macro
 # plugin (it lives in a subfolder), so point it there explicitly.
@@ -48,12 +48,14 @@ render: build
 # Checks that the made-up pull requests land in the expected groups.
 demo-check: $(if $(filter command line,$(origin PULSE)),,build)
 	@counts=$$("$(PULSE)" --demo --json | jq -cS .counts); \
-	expected='{"done":1,"failing":2,"idle":2,"needsYou":3,"ready":2,"toReview":1,"waiting":2}'; \
+	expected='{"answered":1,"done":1,"failing":2,"idle":2,"needsYou":4,"ready":2,"toReview":1,"waiting":2}'; \
 	if [ "$$counts" != "$$expected" ]; then echo "demo-check failed: expected $$expected, got $$counts" >&2; exit 1; fi; \
 	if ! "$(PULSE)" --demo --orgs | grep -qx '\*+ contoso'; then \
 		echo "demo-check failed: --demo --orgs doesn't list only the made-up organization" >&2; exit 1; fi; \
 	if ! "$(PULSE)" --demo --watch | grep -q 'needsYou  Priya Shah commented: !4091'; then \
 		echo "demo-check failed: --demo --watch doesn't show the made-up change" >&2; exit 1; fi; \
+	if ! "$(PULSE)" --demo --chats | grep -q 'Dana Whitfield .*contoso/4113'; then \
+		echo "demo-check failed: --demo --chats doesn't show the made-up links" >&2; exit 1; fi; \
 	echo "demo-check passed: $$counts"
 
 # Renders the README screenshots from the demo data.
@@ -61,6 +63,15 @@ screenshots: build
 	.build/debug/ADOPulse --demo --render build/screenshots
 	mkdir -p docs/images
 	for name in $(SCREENSHOTS); do cp build/screenshots/$$name.png docs/images/; done
+
+# Once per Mac: a certificate to sign builds with, so Full Disk Access survives rebuilds.
+signing-identity:
+	./scripts/make-signing-identity.sh
+
+# Checks, in throwaway keychains, that no app may use the keys builds and releases are signed with
+# without asking (but codesign, for a release's), and that they can't be exported.
+signing-key-check:
+	./scripts/test-signing-key.sh
 
 icon:
 	swift scripts/make-icon.swift build/AppIcon.iconset

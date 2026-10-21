@@ -31,6 +31,9 @@ make app           # build "ADO Pulse.app" into ./build without installing
 make package       # build the universal app for a release, check it and zip it into build/release
 make install       # build the app, copy it to ~/Applications and launch it
 make icon          # regenerate Resources/AppIcon.icns
+make signing-identity  # optional: a certificate to sign builds with, so Full Disk Access survives rebuilds;
+                       # each build then asks for your login password: choose Allow, never Always Allow
+make signing-key-check # check, in throwaway keychains, that the signing keys can't be exported or used unasked
 ```
 
 [How it works](docs/how-it-works.md) explains where the data comes from and how a pull request's
@@ -51,11 +54,14 @@ Sources/ADOPulseCore/   the engine; UI-free, and fully tested
   Notifications         decides what's worth a notification
   Brief                 picks the brief's items and words the prompts for the on-device model
   OrganizationDiscovery finds your organizations
+  NotificationCenter    read-only access to Notification Center's database, and its records
+  ChatLinks             finds pull request links in notifications, and remembers them
+  ChatLinkMonitor       watches Notification Center for new links
   DemoData              made-up pull requests in every state
 Sources/ADOPulse/       the AppKit/SwiftUI app: menu bar, panel, widget, settings, notifications,
                         on-device summaries, command line and renderer
 Tests/ADOPulseCoreTests/  Swift Testing suites, including the engine against a stub Azure DevOps
-scripts/                app bundling, checking and packaging, and the icon
+scripts/                app bundling, signing, checking and packaging, and the icon
 ```
 
 ## Debugging
@@ -67,6 +73,7 @@ The app binary doubles as a command-line tool:
 .build/debug/ADOPulse --json            # the same as JSON, with counts
 .build/debug/ADOPulse --watch           # print changes as they happen
 .build/debug/ADOPulse --orgs            # your organizations, and the ones with pull requests
+.build/debug/ADOPulse --chats           # pull request links in Notification Center (Terminal needs Full Disk Access)
 .build/debug/ADOPulse --render <dir>    # draw the menu bar with the panel open, and each widget size, to PNGs (light and dark)
 ```
 
@@ -95,6 +102,9 @@ log show --last 10m --info --predicate 'subsystem == "com.asaf.ADOPulse"' --styl
 - **Never write to Azure DevOps.** Every request goes through `ADOClient`, which only sends GET
   requests without a body. Don't add another way to make requests, and test new requests against
   the stub server in the tests.
+- **Notification Center is read, never written.** Open its database read-only, keep reads short,
+  and keep only pull request links and who sent them where: never a message's text. Test with the
+  made-up database in the tests, or `ADO_PULSE_NOTIFICATIONS_DB` pointing at a copy.
 - **On-device summaries only.** Use `SystemLanguageModel.default`, never Private Cloud Compute or a
   cloud model: pull request titles and comments mustn't leave the Mac. Decide in code what matters,
   and give the model one item at a time.
@@ -109,13 +119,36 @@ log show --last 10m --info --predicate 'subsystem == "com.asaf.ADOPulse"' --styl
 
 - Keep each pull request focused, and describe the change users will see.
 - Run `make test` and `make demo-check` first. CI also runs them on macOS 15 and macOS 26, packages
-  the universal app, and runs it on macOS 15 on Apple silicon and Intel.
+  the universal app, signs it as a release would but with a throwaway certificate, and runs it on
+  macOS 15 on Apple silicon and Intel.
 - Update the README, or [How it works](docs/how-it-works.md), when behavior or settings change.
 - For UI changes, include before and after screenshots from `make screenshots`.
 
 ## Releasing
 
 Releases are built by GitHub Actions, not on a maintainer's Mac.
+
+Every release is signed with the project's own certificate, so macOS keeps the Full Disk Access
+people give ADO Pulse (for pull requests sent in chats) when they update. Before the first release,
+once:
+
+1. Run `scripts/make-release-certificate.sh ~/ado-pulse-release-certificate`. It creates the
+   certificate, and writes its SHA-1 to `scripts/release-certificate.sha1`; every release is checked
+   against it. Commit that file.
+2. In **Settings › Environments**, create the `release` environment. Give it a required reviewer,
+   who approves each release, and under **Deployment branches and tags**, allow only tags that
+   match `v*`.
+3. Add the two files the script wrote to that folder as secrets of the `release` environment, named
+   after them: `RELEASE_SIGNING_P12` and `RELEASE_SIGNING_P12_PASSWORD`. Not as repository secrets:
+   any workflow on any branch can read those, and this key signs apps that keep the Full Disk Access
+   people gave ADO Pulse.
+4. Keep both somewhere safe, such as a password manager, then delete the folder.
+
+GitHub Free has environments only in public repositories. The certificate is valid for ten years. A
+new one makes everyone allow Full Disk Access again, so keep this one; the script refuses to replace
+it without `--replace`.
+
+To release a version:
 
 1. Set the new version as `CFBundleShortVersionString` in `Resources/Info.plist`, as three numbers
    such as `0.2.0`. The build sets `CFBundleVersion` to the same value. A release fails unless its
@@ -131,14 +164,15 @@ Releases are built by GitHub Actions, not on a maintainer's Mac.
    ```
 
 The tag starts the [release workflow](.github/workflows/release.yml). Its first job checks the
-version, then builds, checks and tests the universal app on macOS 26 (`scripts/package.sh`). The
-second job attests the zip's build provenance and publishes the release with `ADO-Pulse.zip`, its
-SHA-256 and the changelog section. It runs in the `release` environment: give that environment a
-required reviewer (**Settings › Environments**) to approve each release before it's published, and
-turn on private vulnerability reporting (**Settings › Security**) for [SECURITY.md](SECURITY.md).
+version, then builds, checks and tests the universal app on macOS 26 (`scripts/package.sh`), without
+the signing key. The second job runs in the `release` environment, so it waits for your approval.
+Then it signs the app with the release certificate and checks it (`scripts/sign-package.sh`),
+attests the zip's build provenance, and publishes the release with `ADO-Pulse.zip`, its SHA-256 and
+the changelog section. Turn on private vulnerability reporting (**Settings › Security**) for
+[SECURITY.md](SECURITY.md) too.
 
-The app is signed ad hoc and isn't notarized, which is why the README explains the Gatekeeper step.
-It doesn't update itself yet: users download each release.
+The certificate isn't Apple's, and the app isn't notarized, which is why the README explains the
+Gatekeeper step. It doesn't update itself yet: users download each release.
 
 ## License
 

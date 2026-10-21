@@ -8,7 +8,7 @@ public enum DemoData {
 
     /// The groups the demo pull requests land in; `make demo-check` compares them with the app's.
     public static let expectedCounts: [String: Int] = [
-        "needsYou": 3, "failing": 2, "ready": 2, "toReview": 1, "waiting": 2, "done": 1, "idle": 2,
+        "needsYou": 4, "answered": 1, "failing": 2, "ready": 2, "toReview": 1, "waiting": 2, "done": 1, "idle": 2,
     ]
 
     private static let sam = person("b001", "Sam Rivera")
@@ -17,6 +17,7 @@ public enum DemoData {
     private static let jordan = person("b004", "Jordan Lee")
     private static let maria = person("b005", "Maria Garcia")
     private static let chen = person("b006", "Chen Wei")
+    private static let dana = person("b007", "Dana Whitfield")
     private static let buildService = Person(id: "6f1c1a52-0000-4000-8000-00000000c001", name: "Storefront Build Service", isBot: true)
 
     private static func person(_ suffix: String, _ name: String) -> Person {
@@ -71,13 +72,13 @@ public enum DemoData {
             )
         }
         func record(_ pr: PullRequest, role: PRRole = .author, checks: [Check] = [], threads: [ReviewThread] = [],
-                    activity: [Activity] = []) -> PRRecord {
+                    activity: [Activity] = [], chatLinks: [ChatLink] = []) -> PRRecord {
             let dates = threads.flatMap { $0.comments.map(\.publishedAt) } + activity.map(\.at)
             let details = PRDetails(
                 fetchedAt: now, fingerprint: pr.fingerprint, checks: checks, threads: threads, activity: activity,
                 lastActivity: dates.max()
             )
-            return PRRecord(pullRequest: pr, role: role, details: pr.status == .active ? details : nil, me: me.id)
+            return PRRecord(pullRequest: pr, role: role, details: pr.status == .active ? details : nil, me: me.id, chatLinks: chatLinks)
         }
         func reviewer(_ person: Person, _ vote: Vote = .none, required: Bool = false) -> Reviewer {
             Reviewer(person: person, vote: vote, isRequired: required)
@@ -125,6 +126,20 @@ public enum DemoData {
                 ])],
                 activity: [added(22, me, by: alex, ago(2 * day))]
             ),
+            // Needs you: Dana sent it to you in Teams, though you're not a reviewer.
+            record(
+                pr(4113, "Speed up the checkout page", repo: "shop-web", author: jordan, created: ago(5 * hour),
+                   reviewers: [reviewer(maria, .approved), reviewer(chen)], branch: "checkout-speed"),
+                role: .linked,
+                checks: [build("shop-web CI", .passed, ago(4 * hour))],
+                activity: [vote(121, maria, .approved, ago(3 * hour))],
+                chatLinks: [ChatLink(
+                    link: PullRequestLink(organization: organization, project: "Storefront", repository: "shop-web", number: 4113),
+                    app: "com.microsoft.teams2", sender: dana.name, sentAt: ago(8), notificationKey: "demo-teams-message",
+                    conversation: "19:6f1c1a52-0000-4000-8000-00000000a001_6f1c1a52-0000-4000-8000-00000000b007@unq.gbl.spaces",
+                    messageID: String(Int64(ago(8).timeIntervalSince1970 * 1_000))
+                )]
+            ),
             // Needs you: a new review request.
             record(
                 pr(4110, "Upgrade the build agents to .NET 9", repo: "infra", author: jordan, created: ago(40),
@@ -132,6 +147,21 @@ public enum DemoData {
                 role: .reviewer,
                 checks: [build("infra CI", .running, nil)],
                 activity: [added(31, me, by: jordan, ago(40))]
+            ),
+            // Answered: Priya sent it to you in Teams and you approved it, which added you as a reviewer (her team
+            // was asked). It stays in view until you've seen it in the panel.
+            record(
+                pr(4108, "Fix the shipping label layout", repo: "shop-web", author: chen, created: ago(3 * hour),
+                   reviewers: [reviewer(alex, .approved), reviewer(me, .approved)], branch: "shipping-labels"),
+                role: .reviewer,
+                checks: [build("shop-web CI", .passed, ago(2 * hour))],
+                activity: [vote(131, alex, .approved, ago(2 * hour)), added(132, me, by: me, ago(6)), vote(133, me, .approved, ago(6))],
+                chatLinks: [ChatLink(
+                    link: PullRequestLink(organization: organization, project: "Storefront", repository: "shop-web", number: 4108),
+                    app: "com.microsoft.teams2", sender: priya.name, sentAt: ago(9), notificationKey: "demo-teams-message-2",
+                    conversation: "19:6f1c1a52-0000-4000-8000-00000000a001_6f1c1a52-0000-4000-8000-00000000b002@unq.gbl.spaces",
+                    messageID: String(Int64(ago(9).timeIntervalSince1970 * 1_000))
+                )]
             ),
             // Failing: a build failed (the build service's comment about it doesn't need you).
             record(

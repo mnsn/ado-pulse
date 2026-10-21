@@ -31,6 +31,7 @@ final class StatusItemController: NSObject {
         host.sizingOptions = [.preferredContentSize]
         popover.contentViewController = host
         popover.behavior = .transient
+        popover.delegate = self
 
         if let button = statusItem.button {
             button.target = self
@@ -132,5 +133,15 @@ final class StatusItemController: NSObject {
             width: image.size.width, height: image.size.height
         )
         return NSAttributedString(attachment: attachment)
+    }
+}
+
+extension StatusItemController: NSPopoverDelegate {
+    func popoverDidShow(_ notification: Notification) {
+        store.panelDidOpen()
+    }
+
+    func popoverDidClose(_ notification: Notification) {
+        store.panelDidClose()
     }
 }

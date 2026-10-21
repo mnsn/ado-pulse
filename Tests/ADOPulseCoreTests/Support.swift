@@ -325,6 +325,8 @@ final class SnapshotCollector: Sendable {
 
     var count: Int { snapshots.withLock { $0.count } }
 
+    var last: PulseSnapshot? { snapshots.withLock { $0.last } }
+
     @discardableResult
     func wait(_ what: String, timeout: Duration = .seconds(10), until predicate: (PulseSnapshot) -> Bool) async throws -> PulseSnapshot {
         let clock = ContinuousClock()

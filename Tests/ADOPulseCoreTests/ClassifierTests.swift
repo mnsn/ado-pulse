@@ -256,7 +256,8 @@ import Testing
         #expect(snapshot.headline == "3 new commits since your vote")
         #expect(snapshot.events.map(\.id) == ["p3"])
 
-        let quiet = try #require(classify(pr, role: .reviewer, details: makeDetails(for: pr, activity: [voted])))
+        // Seen since your vote, with nothing new: it waits for the author.
+        let quiet = try #require(classify(pr, role: .reviewer, details: makeDetails(for: pr, activity: [voted]), cutoff: t(-day)))
         #expect(quiet.group == .waiting)
         #expect(quiet.reason == .waitingForAuthor)
         #expect(quiet.detail == "You asked Sam Rivera for changes")
@@ -274,9 +275,13 @@ import Testing
         #expect(snapshot.headline == "Priya Shah rejected it")
         #expect(snapshot.pendingEvents.count == 2)
 
-        // Once you've pushed changes, it's their turn: it waits.
+        // Once you've pushed changes, it's their turn: it's answered until you've seen that, then it waits.
         let pushed = votes + [Activity(threadId: 3, kind: .push, at: t(-minute), actor: me, commitCount: 1)]
-        let after = try #require(classify(pr, details: makeDetails(for: pr, checks: passing(), activity: pushed)))
+        let answered = try #require(classify(pr, details: makeDetails(for: pr, checks: passing(), activity: pushed)))
+        #expect(answered.group == .answered)
+        #expect(answered.headline == "You pushed 1 commit")
+        #expect(answered.detail == "Priya Shah rejected it")
+        let after = try #require(classify(pr, details: makeDetails(for: pr, checks: passing(), activity: pushed), cutoff: t(-minute)))
         #expect(after.group == .waiting)
         #expect(after.reason == .rejected)
         #expect(after.detail == "Sam Rivera, Priya Shah")
@@ -459,11 +464,12 @@ import Testing
         let items = [
             item(1, .idle, t(-1)), item(2, .waiting, t(-50)), item(3, .needsYou, t(-30)), item(4, .needsYou, t(-10)),
             item(5, .failing, t(-5)), item(6, .waiting, t(-5)), item(7, .done, nil), item(8, .ready, t(-1)), item(9, .toReview, t(0)),
+            item(10, .answered, t(-100)),
         ]
-        #expect(PROrdering.sorted(items.shuffled()).map(\.key.number) == [4, 3, 5, 8, 9, 6, 2, 7, 1])
+        #expect(PROrdering.sorted(items.shuffled()).map(\.key.number) == [4, 3, 10, 5, 8, 9, 6, 2, 7, 1])
         let counts = GroupCounts(items)
-        #expect(PRGroup.allCases.map { counts[$0] } == [2, 1, 1, 1, 2, 1, 1])
-        #expect(counts.active == 8)
+        #expect(PRGroup.allCases.map { counts[$0] } == [2, 1, 1, 1, 1, 2, 1, 1])
+        #expect(counts.active == 9)
     }
 
     @Test(arguments: [

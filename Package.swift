@@ -8,7 +8,11 @@ let package = Package(
         .executable(name: "ADOPulse", targets: ["ADOPulse"]),
     ],
     targets: [
-        .target(name: "ADOPulseCore"),
+        .target(
+            name: "ADOPulseCore",
+            // Reading Notification Center's database, for pull requests sent in chats.
+            linkerSettings: [.linkedLibrary("sqlite3")]
+        ),
         .executableTarget(
             name: "ADOPulse",
             dependencies: ["ADOPulseCore"]
