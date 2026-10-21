@@ -116,6 +116,21 @@ public actor PulseEngine {
         var role: PRRole
     }
 
+    /// One read of a pull request's details. Its policies and its threads are read separately, and either can fail
+    /// while the other doesn't.
+    private struct DetailsRead: Sendable {
+        /// The policies, nil when the project doesn't let you read them; or what went wrong reading them.
+        var policies: Result<[ADOPolicyEvaluation]?, ADOError>
+        var threads: Result<[ADOThread], ADOError>
+
+        var errors: [ADOError] {
+            var errors: [ADOError] = []
+            if case .failure(let error) = policies { errors.append(error) }
+            if case .failure(let error) = threads { errors.append(error) }
+            return errors
+        }
+    }
+
     /// One of your pull requests that left the active list without showing up as completed.
     private struct Vanished: Sendable {
         var pullRequest: PullRequest
@@ -387,32 +402,40 @@ public actor PulseEngine {
         let fetchedAt = now()
         var queue = pullRequests[...]
         var throttled: ADOError?
-        await withTaskGroup(of: (PullRequest, Result<PRDetails, ADOError>).self) { group in
+        await withTaskGroup(of: (PullRequest, DetailsRead).self) { group in
             for _ in 0..<max(1, configuration.concurrency) {
                 guard let pr = queue.popFirst() else { break }
-                group.addTask { (pr, await Self.details(of: pr, client: client, at: fetchedAt)) }
+                group.addTask { (pr, await Self.details(of: pr, client: client)) }
             }
-            while let (pr, result) = await group.next() {
-                switch result {
-                case .success(let fetched):
+            while let (pr, read) = await group.next() {
+                switch (read.policies, read.threads) {
+                case (.success(let policies), .success(let threads)):
+                    let fetched = PRDetails(fetchedAt: fetchedAt, pullRequest: pr, evaluations: policies, threads: threads)
                     details[pr.key] = fetched
                     entries[pr.key] = RefreshPlanner.Entry(
                         fetchedAt: fetchedAt, fingerprint: pr.fingerprint, isBusy: fetched.hasChecksInProgress,
                         isQuiet: isQuiet(pr, fetched, configuration: configuration, at: fetchedAt)
                     )
-                case .failure(let error):
-                    // Keep the old details, and try again on the normal schedule rather than every refresh.
+                default:
+                    // Keep the old details, and try again on the normal schedule rather than every refresh. But what
+                    // the policies say now replaces what they said, even when the threads couldn't be read: a pull
+                    // request whose policies you may no longer read, or whose build failed since, isn't ready.
+                    if case .success(let policies) = read.policies, var kept = details[pr.key] {
+                        kept.checks = policies?.compactMap(Check.init) ?? []
+                        kept.checksKnown = policies != nil
+                        details[pr.key] = kept
+                    }
                     entries[pr.key] = RefreshPlanner.Entry(
-                        fetchedAt: fetchedAt, fingerprint: pr.fingerprint,
+                        fetchedAt: fetchedAt, fingerprint: pr.fingerprint, isBusy: details[pr.key]?.hasChecksInProgress ?? false,
                         isQuiet: details[pr.key].map { isQuiet(pr, $0, configuration: configuration, at: fetchedAt) } ?? false
                     )
-                    if case .throttled = error {
+                    if let error = read.errors.first(where: { if case .throttled = $0 { true } else { false } }) {
                         throttled = error
                         queue.removeAll()
                     }
                 }
                 if let next = queue.popFirst() {
-                    group.addTask { (next, await Self.details(of: next, client: client, at: fetchedAt)) }
+                    group.addTask { (next, await Self.details(of: next, client: client)) }
                 }
             }
         }
@@ -456,7 +479,7 @@ public actor PulseEngine {
         }
     }
 
-    private static func details(of pr: PullRequest, client: ADOClient, at date: Date) async -> Result<PRDetails, ADOError> {
+    private static func details(of pr: PullRequest, client: ADOClient) async -> DetailsRead {
         let organization = pr.key.organization
         async let evaluations = capture {
             try await client.get(ADOEndpoint.policyEvaluations(
@@ -469,20 +492,15 @@ public actor PulseEngine {
             ), as: ADOList<ADOThread>.self).value
         }
         let (policyResult, threadResult) = await (evaluations, threads)
-        let policies: [ADOPolicyEvaluation]?
+        let policies: Result<[ADOPolicyEvaluation]?, ADOError>
         switch policyResult {
-        case .success(let value): policies = value
+        case .success(let value): policies = .success(value)
         // Some projects don't let everyone read their policies. The pull request still has its threads, but
         // whether it's ready is unknown, which isn't the same as having no policies.
-        case .failure(.forbidden), .failure(.notFound): policies = nil
-        case .failure(let error): return .failure(error)
+        case .failure(.forbidden), .failure(.notFound): policies = .success(nil)
+        case .failure(let error): policies = .failure(error)
         }
-        switch threadResult {
-        case .success(let value):
-            return .success(PRDetails(fetchedAt: date, pullRequest: pr, evaluations: policies, threads: value))
-        case .failure(let error):
-            return .failure(error)
-        }
+        return DetailsRead(policies: policies, threads: threadResult)
     }
 
     private static func capture<T: Sendable>(_ body: () async throws -> T) async -> Result<T, ADOError> {

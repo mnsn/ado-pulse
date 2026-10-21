@@ -273,6 +273,46 @@ import Testing
         #expect(classify(snapshot, now: now)[1]?.group == .waiting)
     }
 
+    @Test func whatThePoliciesSayCountsEvenWhenTheThreadsCantBeRead() async throws {
+        let now = Date()
+        let server = StubServer()
+        server.serveOrganization(mine: [Fixture.pullRequest(1, reviewers: [Fixture.reviewer(People.sam, vote: 10)],
+                                                            created: now.addingTimeInterval(-5 * day))])
+        let approvals = Fixture.evaluation("Minimum number of reviewers", status: "approved", settings: ["minimumApproverCount": 1])
+        server.on("/_apis/policy/evaluations", json: Fixture.list([approvals]))
+        // A comment from before the first run's lookback: not news.
+        server.on("/threads", json: Fixture.list([
+            Fixture.thread(7, comments: [Fixture.comment(1, People.sam, "Looks good", at: now.addingTimeInterval(-4 * day))],
+                           published: now.addingTimeInterval(-4 * day)),
+        ]))
+        // Details are due on every refresh, though the pull request doesn't change.
+        let engine = PulseEngine(client: server.client(), configuration: PulseEngine.Configuration(
+            organizations: [Fixture.org], planner: RefreshPlanner.Options(busyInterval: 0, activeInterval: 0, quietInterval: 0)
+        )) { _ in }
+        await engine.refreshNow()
+        #expect(classify(await engine.currentSnapshot(), now: now)[1]?.group == .ready)
+
+        // The project stops letting you read its policies, and reading the threads fails this time.
+        server.on("/_apis/policy/evaluations") { _ in .status(403) }
+        server.on("/threads") { _ in .status(500) }
+        await engine.refreshNow()
+        let denied = await engine.currentSnapshot()
+        let details = try #require(denied.records.first?.details)
+        #expect(!details.checksKnown)
+        // The threads read before are kept.
+        #expect(details.threads.map(\.id) == [7])
+        #expect(classify(denied, now: now)[1]?.group == .waiting)
+        #expect(classify(denied, now: now)[1]?.headline == "Can't read its policies")
+
+        // Then its build fails, and the threads still can't be read.
+        server.on("/_apis/policy/evaluations", json: Fixture.list([
+            approvals,
+            Fixture.evaluation("Build", status: "rejected", settings: ["displayName": "web-ci"], context: ["buildId": 4, "isExpired": false]),
+        ]))
+        await engine.refreshNow()
+        #expect(classify(await engine.currentSnapshot(), now: now)[1]?.reason == .buildFailed)
+    }
+
     @Test func reportsSigningInProblems() async {
         let server = StubServer()
         server.serveOrganization()
