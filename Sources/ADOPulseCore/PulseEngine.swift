@@ -422,11 +422,12 @@ public actor PulseEngine {
             ), as: ADOList<ADOThread>.self).value
         }
         let (policyResult, threadResult) = await (evaluations, threads)
-        let policies: [ADOPolicyEvaluation]
+        let policies: [ADOPolicyEvaluation]?
         switch policyResult {
         case .success(let value): policies = value
-        // Some projects don't let everyone read their policies; the pull request still has its threads.
-        case .failure(.forbidden), .failure(.notFound): policies = []
+        // Some projects don't let everyone read their policies. The pull request still has its threads, but
+        // whether it's ready is unknown, which isn't the same as having no policies.
+        case .failure(.forbidden), .failure(.notFound): policies = nil
         case .failure(let error): return .failure(error)
         }
         switch threadResult {

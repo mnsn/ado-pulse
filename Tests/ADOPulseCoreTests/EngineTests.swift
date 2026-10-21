@@ -246,6 +246,20 @@ import Testing
         #expect(server.requests.count == 8)
     }
 
+    @Test func policiesYouCantReadAreUnknownNotNone() async throws {
+        let now = Date()
+        let server = StubServer()
+        server.serveOrganization(mine: [Fixture.pullRequest(1, reviewers: [Fixture.reviewer(People.sam, vote: 10)],
+                                                            created: now.addingTimeInterval(-day))])
+        server.on("/_apis/policy/evaluations") { _ in .status(403) }
+        let snapshot = await PulseEngine.loadOnce(
+            client: server.client(), configuration: PulseEngine.Configuration(organizations: [Fixture.org])
+        )
+        let details = try #require(snapshot.records.first?.details)
+        #expect(!details.checksKnown)
+        #expect(classify(snapshot, now: now)[1]?.group == .waiting)
+    }
+
     @Test func reportsSigningInProblems() async {
         let server = StubServer()
         server.serveOrganization()

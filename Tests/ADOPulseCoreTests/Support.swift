@@ -51,11 +51,12 @@ func makePR(
 }
 
 func makeDetails(
-    for pr: PullRequest, checks: [Check] = [], threads: [ReviewThread] = [], activity: [Activity] = [], lastActivity: Date? = nil
+    for pr: PullRequest, checks: [Check] = [], checksKnown: Bool = true, threads: [ReviewThread] = [], activity: [Activity] = [],
+    lastActivity: Date? = nil
 ) -> PRDetails {
     let dates = threads.flatMap { $0.comments.map(\.publishedAt) } + activity.map(\.at)
     return PRDetails(
-        fetchedAt: t(0), fingerprint: pr.fingerprint, checks: checks, threads: threads, activity: activity,
+        fetchedAt: t(0), fingerprint: pr.fingerprint, checks: checks, checksKnown: checksKnown, threads: threads, activity: activity,
         lastActivity: lastActivity ?? dates.max()
     )
 }

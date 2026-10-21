@@ -6,6 +6,9 @@ public struct PRDetails: Sendable, Codable, Equatable {
     /// The pull request's fingerprint when these were fetched.
     public var fingerprint: String
     public var checks: [Check]
+    /// False when the project doesn't let you read its policies: then nobody can tell whether the pull
+    /// request is ready, and `checks` is empty.
+    public var checksKnown: Bool
     /// Conversations between people: system threads and deleted comments are left out.
     public var threads: [ReviewThread]
     /// Pushes, votes and reviewer changes, from the system threads.
@@ -14,18 +17,20 @@ public struct PRDetails: Sendable, Codable, Equatable {
     public var lastActivity: Date?
 
     public init(
-        fetchedAt: Date, fingerprint: String, checks: [Check] = [], threads: [ReviewThread] = [],
+        fetchedAt: Date, fingerprint: String, checks: [Check] = [], checksKnown: Bool = true, threads: [ReviewThread] = [],
         activity: [Activity] = [], lastActivity: Date? = nil
     ) {
         self.fetchedAt = fetchedAt
         self.fingerprint = fingerprint
         self.checks = checks
+        self.checksKnown = checksKnown
         self.threads = threads
         self.activity = activity
         self.lastActivity = lastActivity
     }
 
-    public init(fetchedAt: Date, pullRequest: PullRequest, evaluations: [ADOPolicyEvaluation], threads: [ADOThread]) {
+    /// `evaluations` is nil when the policies couldn't be read.
+    public init(fetchedAt: Date, pullRequest: PullRequest, evaluations: [ADOPolicyEvaluation]?, threads: [ADOThread]) {
         var names: [String: String] = [:]
         for reviewer in pullRequest.reviewers { names[reviewer.person.id] = reviewer.person.name }
         names[pullRequest.author.id] = pullRequest.author.name
@@ -47,7 +52,8 @@ public struct PRDetails: Sendable, Codable, Equatable {
         self.init(
             fetchedAt: fetchedAt,
             fingerprint: pullRequest.fingerprint,
-            checks: evaluations.compactMap(Check.init),
+            checks: evaluations?.compactMap(Check.init) ?? [],
+            checksKnown: evaluations != nil,
             threads: reviewThreads,
             activity: activity.sorted { $0.at < $1.at },
             lastActivity: latest

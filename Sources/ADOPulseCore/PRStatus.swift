@@ -238,9 +238,8 @@ public enum PRClassifier {
         }
         let lastPush = details.activity.last { $0.kind == .push }?.at
         for (id, item) in latestVotes {
-            guard let vote = item.vote, item.at > seenCutoff else { continue }
-            // Only a vote that still stands.
-            if let reviewer = pr.reviewer(id), reviewer.vote != vote { continue }
+            // Only a vote that still stands: the reviewer is still on the pull request, and hasn't changed it.
+            guard let vote = item.vote, item.at > seenCutoff, pr.reviewer(id)?.vote == vote else { continue }
             let kind: PREvent.Kind
             switch vote {
             case .approved, .approvedWithSuggestions: kind = .approved
@@ -337,6 +336,10 @@ public enum PRClassifier {
     ) {
         let checks = details?.checks ?? []
         let blocking = checks.filter { $0.isBlocking && $0.kind != .completion && $0.state != .notApplicable }
+        // Whether it's ready is known only from policies that could be read, for the pull request as it is now:
+        // details fetched before its latest change (a push, a vote) may no longer apply.
+        let current = details.map { $0.fingerprint == pr.fingerprint } ?? false
+        let known = current && details?.checksKnown == true
         func names(_ checks: [Check]) -> String { checks.map(\.name).joined(separator: ", ") }
         func latestCompletion(_ checks: [Check]) -> Date? { checks.compactMap(\.completedAt).max() }
 
@@ -378,7 +381,7 @@ public enum PRClassifier {
         let hasReviewerPolicy = checks.contains { $0.kind == .reviewers && $0.isBlocking }
         let approvedBy = approvals.isEmpty ? nil : "Approved by " + approvals.map(\.person.name).joined(separator: ", ")
 
-        if details != nil, running.isEmpty, notRun.isEmpty, reviewersPending.isEmpty, requirements.isEmpty,
+        if known, running.isEmpty, notRun.isEmpty, reviewersPending.isEmpty, requirements.isEmpty,
            hasReviewerPolicy || !approvals.isEmpty {
             set(.ready, pr.autoComplete ? .autoComplete : .readyToComplete,
                 pr.autoComplete ? "Completing automatically" : "Ready to complete",
@@ -398,8 +401,10 @@ public enum PRClassifier {
             progress.append(running.contains { $0.kind == .build } ? "build running" : "checks running")
         }
 
-        if details == nil {
+        if !current {
             set(.waiting, .waitingForReviewers, "Waiting for reviewers", progress.first, nil)
+        } else if details?.checksKnown == false {
+            set(.waiting, .requirementsPending, "Can't read its policies", progress.first, nil)
         } else if !reviewersPending.isEmpty || (!hasReviewerPolicy && approvals.isEmpty) {
             set(.waiting, .waitingForReviewers, "Waiting for reviewers", progress.joined(separator: " · "), nil)
         } else if !running.isEmpty {
