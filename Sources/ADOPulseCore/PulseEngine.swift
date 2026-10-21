@@ -136,6 +136,16 @@ public actor PulseEngine {
         var pullRequest: PullRequest
         /// When it left the list.
         var since: Date
+        /// When it was last looked up, and how many lookups in a row failed.
+        var lastLookup: Date?
+        var failures = 0
+
+        /// Whether to look it up on a refresh at `date`: right away, again on the next refresh if that fails, then
+        /// less and less often, so the ones that keep failing don't cost requests every refresh.
+        func isDue(at date: Date, interval: TimeInterval) -> Bool {
+            guard let lastLookup, failures > 1 else { return true }
+            return date.timeIntervalSince(lastLookup) >= min(interval * pow(2, Double(failures - 2)), 1_800)
+        }
     }
 
     private struct OrganizationLists: Sendable {
@@ -330,9 +340,13 @@ public actor PulseEngine {
         }
         // Back in the list, listed as completed, or gone longer than Done shows anything.
         vanished = vanished.filter { key, item in listed[key] == nil && completed[key] == nil && item.since > closedSince }
+        // The ones never looked up first, then the ones looked up longest ago: a few that keep failing don't hold up
+        // the rest.
         let due = vanished.values
-            .filter { succeeded.contains($0.pullRequest.key.organization) }
-            .sorted { ($0.since, $0.pullRequest.key) < ($1.since, $1.pullRequest.key) }
+            .filter { succeeded.contains($0.pullRequest.key.organization) && $0.isDue(at: startedAt, interval: configuration.interval) }
+            .sorted {
+                ($0.lastLookup ?? .distantPast, $0.since, $0.pullRequest.key) < ($1.lastLookup ?? .distantPast, $1.since, $1.pullRequest.key)
+            }
             .prefix(5)
         for item in due {
             let key = item.pullRequest.key
@@ -341,13 +355,14 @@ public actor PulseEngine {
                 let fresh = PullRequest(organization: key.organization, dto)
                 if fresh.status == .completed || fresh.status == .abandoned { completed[key] = fresh }
                 vanished[key] = nil
-            } catch ADOError.notFound {
+            } catch ADOError.notFound, ADOError.forbidden {
                 // Deleted, or moved somewhere you can't read: nothing to show.
                 vanished[key] = nil
             } catch ADOError.throttled {
                 break
             } catch {
-                // Try again next refresh.
+                vanished[key]?.lastLookup = startedAt
+                vanished[key]?.failures += 1
             }
         }
         for (key, pr) in done where completed[key] == nil && listed[key] == nil {

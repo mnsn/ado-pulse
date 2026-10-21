@@ -461,6 +461,36 @@ import Testing
         #expect(attempts.value == 2)
     }
 
+    @Test func lookupsThatKeepFailingDontHoldUpTheRest() async throws {
+        let now = Date()
+        let server = StubServer()
+        server.serveOrganization(mine: (1...7).map { Fixture.pullRequest($0) })
+        let engine = engine(server)
+        await engine.refreshNow()
+
+        // All seven left the list at once. Looking up the first five keeps failing, and you may not read the sixth.
+        server.on("/_apis/git/pullrequests", query: ["searchCriteria.status": "active", "searchCriteria.creatorId": Fixture.me],
+                  json: Fixture.list([]))
+        for number in 1...5 {
+            server.on("/_apis/git/pullrequests/\(number)") { _ in .status(500) }
+        }
+        server.on("/_apis/git/pullrequests/6") { _ in .status(403) }
+        server.on("/_apis/git/pullrequests/7", json: Fixture.pullRequest(7, status: "abandoned", closed: now.addingTimeInterval(-minute)))
+        let lookups = { (number: Int) in server.requests.filter { $0.url?.path.hasSuffix("/pullrequests/\(number)") == true }.count }
+
+        // The first five, then the two not looked up yet before them again.
+        await engine.refreshNow()
+        await engine.refreshNow()
+        let snapshot = await engine.currentSnapshot()
+        #expect(snapshot.records.map(\.id.number) == [7])
+        #expect(snapshot.records.first?.pullRequest.status == .abandoned)
+
+        // Each that failed twice waits before it's looked up again, and the one you may not read isn't.
+        for _ in 0..<3 { await engine.refreshNow() }
+        #expect((1...5).map(lookups) == [2, 2, 2, 2, 2])
+        #expect(lookups(6) == 1)
+    }
+
     @Test func backsOffWhenThrottled() async {
         let server = StubServer()
         server.serveOrganization(mine: [Fixture.pullRequest(1)])
