@@ -4,24 +4,24 @@
 # scripts/release-certificate.sha1, and zips it again, with the new SHA-256 in the .sha256 file and the
 # release notes.
 #   scripts/sign-package.sh [folder]   (default: build/release)
-# Signs with ADO_PULSE_SIGNING_IDENTITY, found in ADO_PULSE_SIGNING_KEYCHAIN if that's set.
+# Signs with the certificate named exactly ADO_PULSE_SIGNING_IDENTITY, by its SHA-1 (scripts/signing.sh),
+# found in ADO_PULSE_SIGNING_KEYCHAIN if that's set.
 set -euo pipefail
 cd "$(dirname "$0")/.."
+source scripts/signing.sh
 
 OUT="${1:-build/release}"
 ZIP="ADO-Pulse.zip"
 IDENTITY="${ADO_PULSE_SIGNING_IDENTITY:?Set ADO_PULSE_SIGNING_IDENTITY, as scripts/import-signing-certificate.sh does.}"
-KEYCHAIN_ARGS=()
-if [[ -n "${ADO_PULSE_SIGNING_KEYCHAIN:-}" ]]; then
-    KEYCHAIN_ARGS=(--keychain "$ADO_PULSE_SIGNING_KEYCHAIN")
-fi
+KEYCHAIN="${ADO_PULSE_SIGNING_KEYCHAIN:-}"
+HASH="$(signing_identity "$IDENTITY" ${KEYCHAIN:+"$KEYCHAIN"})"
 
 WORK="$(mktemp -d)"
 trap 'rm -rf "$WORK"' EXIT
 ditto -x -k "$OUT/$ZIP" "$WORK"
 APP="$WORK/ADO Pulse.app"
 # The same options as scripts/build-app.sh; the check below makes sure of the result.
-codesign --force --options runtime --timestamp=none --sign "$IDENTITY" ${KEYCHAIN_ARGS[@]+"${KEYCHAIN_ARGS[@]}"} "$APP"
+sign_with "$HASH" "$APP" "$KEYCHAIN" --options runtime --timestamp=none
 ./scripts/check-app.sh --universal --release "$APP"
 
 OLD="$(cut -d ' ' -f 1 "$OUT/$ZIP.sha256")"

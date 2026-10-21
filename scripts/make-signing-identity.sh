@@ -29,34 +29,27 @@ esac
 NAME="${ADO_PULSE_SIGNING_IDENTITY:-ADO Pulse Signing}"
 KEYCHAIN_ARGUMENT="${1:-}"
 KEYCHAIN="${KEYCHAIN_ARGUMENT:-$HOME/Library/Keychains/login.keychain-db}"
-SCRIPTS="$(cd "$(dirname "$0")" && pwd)"
+source "$(dirname "$0")/signing.sh"
 # macOS's own LibreSSL: `security import` can't read the .p12 files that OpenSSL 3 writes by default.
 OPENSSL=/usr/bin/openssl
 
 WORK="$(mktemp -d)"
 trap 'rm -rf "$WORK"' EXIT
 
-signing_key() { swift -suppress-warnings "$SCRIPTS/signing-key.swift" "$@"; }
-
 # Whether the key is still safe: no app may use it without asking, and it can't be exported. Only its
 # attributes and access list are read, so macOS doesn't ask anything.
 key_is_safe() {
-    local status=0
-    signing_key check "$NAME" ${KEYCHAIN_ARGUMENT:+"$KEYCHAIN_ARGUMENT"} || status=$?
-    if [[ $status -eq 3 ]]; then
-        echo "So anything running as you could sign code as ADO Pulse with it, and get the Full Disk Access you" >&2
-        echo "gave ADO Pulse. Replace it, and when macOS asks, choose Allow, never Always Allow:" >&2
-        echo "  scripts/make-signing-identity.sh --replace" >&2
-    fi
-    return $status
+    require_safe_key "$NAME" "$NAME" ${KEYCHAIN_ARGUMENT:+"$KEYCHAIN_ARGUMENT"}
 }
 
-# Signs a throwaway copy of a tool, to check that the key works (macOS asks) and to show what macOS will
-# match. Then checks that the answer wasn't Always Allow.
+# Signs a throwaway copy of a tool with the certificate, by its SHA-1, to check that the key works (macOS
+# asks) and to show what macOS will match. Then checks that the answer wasn't Always Allow.
 check_identity() {
+    local hash
+    hash="$(signing_identity "$NAME" "$KEYCHAIN")" || exit 1
     cp /usr/bin/true "$WORK/probe"
     echo "macOS asks whether codesign may use the key: enter your login password and choose Allow."
-    if ! codesign --force --sign "$NAME" --keychain "$KEYCHAIN" --timestamp=none "$WORK/probe"; then
+    if ! sign_with "$hash" "$WORK/probe" "$KEYCHAIN" --timestamp=none; then
         echo "codesign couldn't use the \"$NAME\" key. Run this again, and when macOS asks whether codesign" >&2
         echo "may use it, enter your login password and choose Allow." >&2
         exit 1
@@ -94,13 +87,23 @@ if $REPLACE || $DELETE; then
     fi
 fi
 
-if security find-identity -p codesigning "$KEYCHAIN" | grep -F "\"$NAME\"" >/dev/null; then
-    echo "\"$NAME\" is already in $KEYCHAIN."
-    key_is_safe || exit 1
-    check_identity
-    exit 0
-fi
-if security find-certificate -c "$NAME" "$KEYCHAIN" >/dev/null 2>&1; then
+STATUS=0
+signing_identity "$NAME" "$KEYCHAIN" >/dev/null 2>"$WORK/found" || STATUS=$?
+case $STATUS in
+    0)
+        echo "\"$NAME\" is already in $KEYCHAIN."
+        key_is_safe || exit 1
+        check_identity
+        exit 0
+        ;;
+    1) ;;
+    *)
+        cat "$WORK/found" >&2
+        echo "Run this again with --replace, to start over with one." >&2
+        exit 1
+        ;;
+esac
+if [[ -n "$(certificates)" ]]; then
     echo "$KEYCHAIN has a \"$NAME\" certificate but not its private key. Delete the certificate" >&2
     echo "in Keychain Access, then run this again." >&2
     exit 1

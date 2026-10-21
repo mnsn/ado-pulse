@@ -171,9 +171,14 @@ build is signed. (`security import -T ""` trusts no app either, but its `-x` has
 PKCS #12, whose key could then be exported.) A key that some app could use without asking (Always
 Allow) would let anything running as you sign its own code as ADO Pulse, and get the Full Disk Access
 you gave it, so each build first reads the key's access list, which asks nothing, and won't sign with
-such a key. Releases are signed with the project's own certificate, whose key the release workflow
-imports the same way, for codesign only (see "Releasing" in [CONTRIBUTING.md](../CONTRIBUTING.md)), so
-access survives updates.
+such a key. The key it checks is the one it signs with: the certificate named exactly
+`ADO Pulse Signing`, given to codesign by its SHA-1 (`scripts/signing.sh`), and the build checks that
+the signature names it. Given a name, codesign would use an identity preference by that name instead,
+if there were one, or a certificate whose name merely contains it. Without a certificate named exactly
+so, builds are signed ad hoc, and with two, they aren't signed at all. Releases are signed with the
+project's own certificate, whose key the release workflow imports the same way, for codesign only, and
+signs with the same way (see "Releasing" in [CONTRIBUTING.md](../CONTRIBUTING.md)), so access survives
+updates.
 
 ## Notifications
 

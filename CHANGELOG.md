@@ -14,8 +14,9 @@
   access you give ADO Pulse when you update it.
 - Building from source: `make signing-identity` creates a certificate to sign your builds with, so the
   Full Disk Access you give them survives rebuilds. No app may use its key without asking, not even
-  codesign, and it can't be exported. Builds won't sign with a key that some app may use without
-  asking (Always Allow). `scripts/make-signing-identity.sh --delete` goes back to ad hoc builds.
+  codesign, and it can't be exported. Builds sign with that exact certificate, by its SHA-1, never one
+  with a name like it, and won't sign with a key that some app may use without asking (Always Allow).
+  `scripts/make-signing-identity.sh --delete` goes back to ad hoc builds.
 
 Fixes:
 

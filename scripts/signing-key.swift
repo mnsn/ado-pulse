@@ -1,5 +1,6 @@
-// Imports and checks the private key of a certificate that ADO Pulse is signed with, for
-// scripts/make-signing-identity.sh, scripts/build-app.sh and scripts/import-signing-certificate.sh.
+// Finds the certificate that ADO Pulse is signed with, and imports and checks its private key, for
+// scripts/signing.sh (which scripts/build-app.sh, scripts/sign-package.sh and
+// scripts/make-signing-identity.sh use) and scripts/import-signing-certificate.sh.
 // macOS ties ADO Pulse's Full Disk Access to the certificate, so any app that may use its key without
 // asking could sign itself as ADO Pulse and get that access. So the key trusts no app, not even codesign
 // or security, and macOS asks for your login password each time it's used. And it can't be exported,
@@ -11,11 +12,18 @@
 //       in base64. <name> describes the key when macOS asks to use it. --trust lets that app use the key
 //       without asking: only for a keychain of its own, like the release workflow's. Fails with status
 //       3, after importing it, if the key can be exported or another app may use it without asking.
-//   swift scripts/signing-key.swift check <name> [keychain]
-//       Fails with status 3 if the key of the certificate named <name> can be exported, or some app may
-//       use it without asking, and says which; with status 1 if there's no such certificate, and 2 if it
-//       can't tell. It reads only the key's attributes and access list, with user interaction off, so
-//       macOS never asks anything.
+//   swift scripts/signing-key.swift find <name> [keychain]
+//       Prints the SHA-1 of the one identity whose certificate is named exactly <name>, to sign with
+//       rather than the name: given a name, codesign uses an identity preference by that name if there is
+//       one, and otherwise a certificate whose name merely contains it. Fails with status 1 if there's
+//       none, and 4 if there's more than one.
+//   swift scripts/signing-key.swift check <name or SHA-1> [keychain]
+//       Fails with status 3 if the key of the certificate named exactly <name>, or with that SHA-1, can
+//       be exported, or some app may use it without asking, and says which; with status 1 if there's no
+//       such certificate, and 2 if it can't tell.
+// Both read only certificates and the keys' attributes and access lists, with user interaction off, so
+// macOS never asks anything. Without a keychain, they look where codesign does: the search list.
+import CryptoKit
 import Foundation
 import Security
 
@@ -145,7 +153,8 @@ func importIdentity(into path: String, name: String, trusting trustedPaths: [Str
     exit(0)
 }
 
-func checkKey(named name: String, in path: String?) -> Never {
+/// Every identity in the keychain at `path`, or on the search list, with its certificate's common name and SHA-1.
+func identities(in path: String?) -> [(identity: SecIdentity, name: String?, sha1: String)] {
     // Anything that would need a prompt fails instead.
     SecKeychainSetUserInteractionAllowed(false)
     var query: [String: Any] = [
@@ -158,22 +167,45 @@ func checkKey(named name: String, in path: String?) -> Never {
     }
     var result: CFTypeRef?
     let status = SecItemCopyMatching(query as CFDictionary, &result)
-    let identities = status == errSecSuccess ? (result as? [SecIdentity] ?? []) : []
+    guard status == errSecSuccess || status == errSecItemNotFound else { fail("can't list the identities (\(status))", status: 2) }
+    return (result as? [SecIdentity] ?? []).compactMap { identity in
+        var certificate: SecCertificate?
+        guard SecIdentityCopyCertificate(identity, &certificate) == errSecSuccess, let certificate else { return nil }
+        var name: CFString?
+        SecCertificateCopyCommonName(certificate, &name)
+        let sha1 = Insecure.SHA1.hash(data: SecCertificateCopyData(certificate) as Data).map { String(format: "%02X", $0) }.joined()
+        return (identity, name as String?, sha1)
+    }
+}
 
+func isSHA1(_ text: String) -> Bool {
+    text.count == 40 && text.allSatisfy(\.isHexDigit)
+}
+
+func findIdentity(named name: String, in path: String?) -> Never {
+    // The same certificate in more than one keychain is still one identity.
+    let hashes = Set(identities(in: path).filter { $0.name == name }.map(\.sha1))
+    guard let hash = hashes.first else { fail("there's no certificate named \"\(name)\" with its private key") }
+    guard hashes.count == 1 else {
+        fail("there's more than one certificate named \"\(name)\": \(hashes.sorted().joined(separator: ", "))", status: 4)
+    }
+    print(hash)
+    exit(0)
+}
+
+func checkKey(of certificate: String, in path: String?) -> Never {
+    let sha1 = isSHA1(certificate) ? certificate.uppercased() : nil
     var found = false
     var problems: [String] = []
-    for identity in identities {
-        var certificate: SecCertificate?
-        guard SecIdentityCopyCertificate(identity, &certificate) == errSecSuccess, let certificate,
-              SecCertificateCopySubjectSummary(certificate) as String? == name
-        else { continue }
+    for item in identities(in: path) where sha1.map({ $0 == item.sha1 }) ?? (item.name == certificate) {
         found = true
-        guard let exposure = exposure(of: identity) else {
+        let name = item.name ?? item.sha1
+        guard let exposure = exposure(of: item.identity) else {
             fail("can't tell who may use the key of \"\(name)\"", status: 2)
         }
         problems += issues(with: exposure, name: name)
     }
-    guard found else { fail("there's no certificate named \"\(name)\"") }
+    guard found else { fail("there's no certificate \(sha1 == nil ? "named " : "")\"\(certificate)\" with its private key") }
     guard problems.isEmpty else { fail(Array(Set(problems)).sorted().joined(separator: "; "), status: 3) }
     exit(0)
 }
@@ -184,8 +216,11 @@ case "import" where arguments.count == 3:
     importIdentity(into: arguments[1], name: arguments[2], trusting: [])
 case "import" where arguments.count == 5 && arguments[3] == "--trust":
     importIdentity(into: arguments[1], name: arguments[2], trusting: [arguments[4]])
+case "find" where arguments.count == 2 || arguments.count == 3:
+    findIdentity(named: arguments[1], in: arguments.count == 3 ? arguments[2] : nil)
 case "check" where arguments.count == 2 || arguments.count == 3:
-    checkKey(named: arguments[1], in: arguments.count == 3 ? arguments[2] : nil)
+    checkKey(of: arguments[1], in: arguments.count == 3 ? arguments[2] : nil)
 default:
-    fail("usage: signing-key.swift import <keychain> <name> [--trust <app>] | check <name> [keychain]", status: 64)
+    fail("usage: signing-key.swift import <keychain> <name> [--trust <app>] | find <name> [keychain] | check <name or SHA-1> [keychain]",
+         status: 64)
 }
