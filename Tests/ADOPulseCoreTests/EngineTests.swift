@@ -53,6 +53,37 @@ import Testing
         let data = try? JSONEncoder().encode(seen)
         #expect(data.flatMap { try? JSONDecoder().decode(SeenState.self, from: $0) } == seen)
     }
+
+    @Test func eachAccountHasSeenItsOwn() throws {
+        let key = PRKey("contoso", 1)
+        // Saved before ADO Pulse told accounts apart: it becomes the account signed in now's.
+        let saved = Data(#"{"baseline": 0, "seenAt": {"contoso/1": 864000}}"#.utf8)
+        var book = SeenBook(current: try JSONDecoder().decode(SeenState.self, from: saved))
+        #expect(book.current.account == nil)
+        var switched = book.signIn("tenant/robin", now: t(20 * day))
+        #expect(!switched)
+        #expect(book.current.account == "tenant/robin")
+        #expect(book.current.cutoff(for: key) == Date(timeIntervalSinceReferenceDate: 864_000))
+
+        // Sam signs in: a first run of their own, with Robin's kept.
+        book.current.markSeen([key], at: t(10 * day))
+        switched = book.signIn("tenant/sam", now: t(20 * day))
+        #expect(switched)
+        #expect(book.current == SeenState.firstRun(now: t(20 * day), account: "tenant/sam"))
+        #expect(book.state(for: "tenant/robin").cutoff(for: key) == t(10 * day))
+        #expect(book.state(for: "tenant/sam") == book.current)
+        #expect(book.state(for: nil) == book.current)
+        switched = book.signIn("tenant/sam", now: t(30 * day))
+        #expect(!switched)
+
+        // Robin again: Robin's, and Sam's kept.
+        book.current.markSeen([key], at: t(25 * day))
+        switched = book.signIn("tenant/robin", now: t(30 * day))
+        #expect(switched)
+        #expect(book.current.cutoff(for: key) == t(10 * day))
+        #expect(book.others["tenant/sam"]?.cutoff(for: key) == t(25 * day))
+        #expect(book.state(for: "tenant/kim", now: t(30 * day)) == SeenState.firstRun(now: t(30 * day), account: "tenant/kim"))
+    }
 }
 
 @Suite struct NotificationTests {
@@ -273,6 +304,46 @@ import Testing
         #expect(classify(snapshot, now: now)[1]?.group == .waiting)
     }
 
+    @Test func whatThePoliciesSayCountsEvenWhenTheThreadsCantBeRead() async throws {
+        let now = Date()
+        let server = StubServer()
+        server.serveOrganization(mine: [Fixture.pullRequest(1, reviewers: [Fixture.reviewer(People.sam, vote: 10)],
+                                                            created: now.addingTimeInterval(-5 * day))])
+        let approvals = Fixture.evaluation("Minimum number of reviewers", status: "approved", settings: ["minimumApproverCount": 1])
+        server.on("/_apis/policy/evaluations", json: Fixture.list([approvals]))
+        // A comment from before the first run's lookback: not news.
+        server.on("/threads", json: Fixture.list([
+            Fixture.thread(7, comments: [Fixture.comment(1, People.sam, "Looks good", at: now.addingTimeInterval(-4 * day))],
+                           published: now.addingTimeInterval(-4 * day)),
+        ]))
+        // Details are due on every refresh, though the pull request doesn't change.
+        let engine = PulseEngine(client: server.client(), configuration: PulseEngine.Configuration(
+            organizations: [Fixture.org], planner: RefreshPlanner.Options(busyInterval: 0, activeInterval: 0, quietInterval: 0)
+        )) { _ in }
+        await engine.refreshNow()
+        #expect(classify(await engine.currentSnapshot(), now: now)[1]?.group == .ready)
+
+        // The project stops letting you read its policies, and reading the threads fails this time.
+        server.on("/_apis/policy/evaluations") { _ in .status(403) }
+        server.on("/threads") { _ in .status(500) }
+        await engine.refreshNow()
+        let denied = await engine.currentSnapshot()
+        let details = try #require(denied.records.first?.details)
+        #expect(!details.checksKnown)
+        // The threads read before are kept.
+        #expect(details.threads.map(\.id) == [7])
+        #expect(classify(denied, now: now)[1]?.group == .waiting)
+        #expect(classify(denied, now: now)[1]?.headline == "Can't read its policies")
+
+        // Then its build fails, and the threads still can't be read.
+        server.on("/_apis/policy/evaluations", json: Fixture.list([
+            approvals,
+            Fixture.evaluation("Build", status: "rejected", settings: ["displayName": "web-ci"], context: ["buildId": 4, "isExpired": false]),
+        ]))
+        await engine.refreshNow()
+        #expect(classify(await engine.currentSnapshot(), now: now)[1]?.reason == .buildFailed)
+    }
+
     @Test func reportsSigningInProblems() async {
         let server = StubServer()
         server.serveOrganization()
@@ -395,6 +466,47 @@ import Testing
         #expect(snapshot.records.allSatisfy { $0.me == sam })
     }
 
+    @Test func whatOneAccountHasSeenDoesntHideWhatsNewForAnother() async throws {
+        let now = Date()
+        let server = StubServer()
+        let tokens = server.tokens
+        await tokens.signIn(as: "tenant/robin")
+        // Robin's pull request, which Sam reviews, and Robin's comment for Sam an hour ago.
+        let pr = Fixture.pullRequest(1, reviewers: [Fixture.reviewer(People.sam)], created: now.addingTimeInterval(-day))
+        server.serveOrganization(mine: [pr])
+        server.on("/threads", json: Fixture.list([
+            Fixture.thread(7, comments: [Fixture.comment(1, People.me, "Over to you @<\(People.sam.id)>", at: now.addingTimeInterval(-hour))],
+                           published: now.addingTimeInterval(-hour)),
+        ]))
+        let engine = engine(server, tokens: tokens)
+        await engine.refreshNow()
+        #expect(await engine.currentSnapshot().account == "tenant/robin")
+
+        // Robin opens it from ADO Pulse.
+        var book = SeenBook(current: .firstRun(now: now))
+        book.signIn("tenant/robin", now: now)
+        book.current.markSeen([PRKey(Fixture.org, 1)], at: now)
+
+        // Then Sam signs in to the Azure CLI on the same Mac, and sees the same pull request.
+        server.serveOrganization(me: People.sam.id, reviewing: [pr])
+        await tokens.signIn(as: "tenant/sam")
+        await engine.refreshNow()
+        let snapshot = await engine.currentSnapshot()
+        #expect(snapshot.account == "tenant/sam")
+        let record = try #require(snapshot.records.first)
+        #expect(record.id == PRKey(Fixture.org, 1))
+        #expect(record.role == .reviewer && record.me == People.sam.id)
+
+        // What Robin has seen would hide the comment for Sam.
+        func group(_ seen: SeenState) -> PRGroup? {
+            PRClassifier.snapshot(for: record, seenCutoff: seen.cutoff(for: record.id), now: now)?.group
+        }
+        #expect(group(book.current) != .needsYou)
+        let switched = book.signIn("tenant/sam", now: now)
+        #expect(switched)
+        #expect(group(book.current) == .needsYou)
+    }
+
     @Test func keepsLookingUpPullRequestsThatLeftTheList() async throws {
         let now = Date()
         let server = StubServer()
@@ -419,6 +531,36 @@ import Testing
         #expect(snapshot.records.map(\.id.number) == numbers)
         #expect(snapshot.records.allSatisfy { $0.pullRequest.status == .abandoned })
         #expect(attempts.value == 2)
+    }
+
+    @Test func lookupsThatKeepFailingDontHoldUpTheRest() async throws {
+        let now = Date()
+        let server = StubServer()
+        server.serveOrganization(mine: (1...7).map { Fixture.pullRequest($0) })
+        let engine = engine(server)
+        await engine.refreshNow()
+
+        // All seven left the list at once. Looking up the first five keeps failing, and you may not read the sixth.
+        server.on("/_apis/git/pullrequests", query: ["searchCriteria.status": "active", "searchCriteria.creatorId": Fixture.me],
+                  json: Fixture.list([]))
+        for number in 1...5 {
+            server.on("/_apis/git/pullrequests/\(number)") { _ in .status(500) }
+        }
+        server.on("/_apis/git/pullrequests/6") { _ in .status(403) }
+        server.on("/_apis/git/pullrequests/7", json: Fixture.pullRequest(7, status: "abandoned", closed: now.addingTimeInterval(-minute)))
+        let lookups = { (number: Int) in server.requests.filter { $0.url?.path.hasSuffix("/pullrequests/\(number)") == true }.count }
+
+        // The first five, then the two not looked up yet before them again.
+        await engine.refreshNow()
+        await engine.refreshNow()
+        let snapshot = await engine.currentSnapshot()
+        #expect(snapshot.records.map(\.id.number) == [7])
+        #expect(snapshot.records.first?.pullRequest.status == .abandoned)
+
+        // Each that failed twice waits before it's looked up again, and the one you may not read isn't.
+        for _ in 0..<3 { await engine.refreshNow() }
+        #expect((1...5).map(lookups) == [2, 2, 2, 2, 2])
+        #expect(lookups(6) == 1)
     }
 
     @Test func backsOffWhenThrottled() async {

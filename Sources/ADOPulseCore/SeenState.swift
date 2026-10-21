@@ -8,17 +8,20 @@ public struct SeenState: Sendable, Codable, Equatable {
     public var baseline: Date
     /// Pull request (`PRKey.description`) → when you last looked at it.
     public var seenAt: [String: Date]
+    /// Whose this is (`AccessToken.account`), once known: each account you sign in with has its own.
+    public var account: String?
 
     /// On the first run, only the last few days count as new, so years of old threads don't all need you.
     public static let firstRunLookback: TimeInterval = 3 * 86_400
 
-    public init(baseline: Date, seenAt: [String: Date] = [:]) {
+    public init(baseline: Date, seenAt: [String: Date] = [:], account: String? = nil) {
         self.baseline = baseline
         self.seenAt = seenAt
+        self.account = account
     }
 
-    public static func firstRun(now: Date = Date()) -> SeenState {
-        SeenState(baseline: now.addingTimeInterval(-firstRunLookback))
+    public static func firstRun(now: Date = Date(), account: String? = nil) -> SeenState {
+        SeenState(baseline: now.addingTimeInterval(-firstRunLookback), account: account)
     }
 
     public func cutoff(for key: PRKey) -> Date {
@@ -35,6 +38,40 @@ public struct SeenState: Sendable, Codable, Equatable {
     public mutating func prune(keeping keys: Set<PRKey>, olderThan date: Date) {
         let kept = Set(keys.map(\.description))
         seenAt = seenAt.filter { kept.contains($0.key) || $0.value > date }
+    }
+}
+
+/// What you've seen, for each account you've signed in to the Azure CLI with. Two accounts can see the same pull
+/// request, and what one has seen of it says nothing about what the other has.
+public struct SeenBook: Sendable, Equatable {
+    /// The state of the account signed in now, or last.
+    public var current: SeenState
+    /// The other accounts' states, by account.
+    public var others: [String: SeenState]
+
+    public init(current: SeenState, others: [String: SeenState] = [:]) {
+        self.current = current
+        self.others = others
+    }
+
+    /// The state for `account`, without switching to it.
+    public func state(for account: String?, now: Date = Date()) -> SeenState {
+        guard let account, let currentAccount = current.account, currentAccount != account else { return current }
+        return others[account] ?? .firstRun(now: now, account: account)
+    }
+
+    /// Switches to `account`'s state, keeping the current one for when its account signs in again. A state from
+    /// before ADO Pulse told accounts apart becomes this account's. Returns whether it was another account's.
+    @discardableResult
+    public mutating func signIn(_ account: String, now: Date = Date()) -> Bool {
+        guard current.account != account else { return false }
+        guard let previous = current.account else {
+            current.account = account
+            return false
+        }
+        others[previous] = current
+        current = others.removeValue(forKey: account) ?? .firstRun(now: now, account: account)
+        return true
     }
 }
 
