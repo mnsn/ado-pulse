@@ -11,11 +11,14 @@ az account get-access-token --resource 499b84ac-1321-427f-aa17-267ca6975798 --ou
 The GUID is Azure DevOps's application ID. The CLI answers silently from its own token cache and
 refreshes its sign-in by itself, so ADO Pulse never shows a sign-in screen unless the CLI is signed
 out. A token lasts about an hour; ADO Pulse reuses it until five minutes before it expires, and asks
-again if Azure DevOps rejects it.
+again if Azure DevOps rejects it. The token also says who it's for: when you sign in to the CLI as
+someone else, ADO Pulse starts over with their pull requests.
 
 An app started from Finder or as a login item doesn't get your shell's `PATH`, so ADO Pulse looks
 for `az` in `/opt/homebrew/bin`, `/usr/local/bin` and the other usual places, then asks your login
-shell (`command -v az`). Its runs of `az` turn off the CLI's telemetry and warnings.
+shell (`command -v az`). Its runs of `az` turn off the CLI's telemetry and warnings, and each is
+limited to a minute: `az` runs in a process group of its own, which is ended at the time limit, and
+anything it leaves running that keeps its output open is ended half a second after it exits.
 
 Signing in sits behind a small protocol (`AccessTokenProvider`). A provider using Microsoft's
 authentication library (MSAL) can be added once there's an app registration to sign in with.
@@ -26,14 +29,14 @@ All requests are GETs to the Azure DevOps REST API (version 7.1):
 
 | Request | When | Provides |
 |---|---|---|
-| `_apis/connectionData` | once per organization | your identity ID and name |
+| `_apis/connectionData` | once per organization, and again when you sign in as someone else | your identity ID and name |
 | `_apis/git/pullrequests?searchCriteria.creatorId=…&status=active` | every refresh | your active pull requests, across all projects |
 | `_apis/git/pullrequests?searchCriteria.reviewerId=…&status=active` | every refresh | the ones you review |
 | `_apis/git/pullrequests?searchCriteria.creatorId=…&status=completed&minTime=…` | every refresh | yours completed in the Done window |
 | `{project}/_apis/policy/evaluations?artifactId=vstfs:///CodeReview/CodeReviewId/{project}/{id}` | per pull request | builds, status checks, reviewer and other policies |
 | `{project}/_apis/git/repositories/{repo}/pullRequests/{id}/threads` | per pull request | comment threads, and activity: pushes, votes, reviewer changes |
-| `_apis/git/pullrequests/{id}` | when one of yours leaves the active list | whether it was completed or abandoned |
-| `app.vssps.visualstudio.com/_apis/profile/profiles/me`, `…/_apis/accounts` | finding your organizations | your organizations |
+| `_apis/git/pullrequests/{id}` | when one of yours leaves the active list: five a refresh, again until it works | whether it was completed or abandoned |
+| `app.vssps.visualstudio.com/_apis/profile/profiles/me`, `…/_apis/accounts` | finding your organizations | your organizations; then each one is checked for your pull requests, and when none were found because some couldn't be checked (offline, say), it tries again a minute later |
 
 The list endpoints have no "last updated" field, and new comments don't change anything in them,
 so a pull request's details (policies and threads, two requests) are fetched on a schedule
@@ -70,7 +73,10 @@ The [groups table in the README](../README.md#what-the-groups-mean) lists them. 
 - Other requirements, such as **Work item linking** and **Comment requirements**, are reported as
   rejected until they're met: that means pending, not failed.
 
-Only blocking policies count. A disabled policy is ignored.
+Only blocking policies count. A disabled policy is ignored. When a project doesn't let you read its
+policies, nobody can tell whether a pull request there is ready: it waits, as **Can't read its
+policies**. And ready means ready as the pull request is now: until its policies have been read
+again after a push or a vote, it waits.
 
 **Your pull requests** are, in order: in **Needs You** if something new needs you; **Idle** if
 they're drafts or have had no activity (comments, pushes, votes) for two weeks; **Failing** for a
@@ -160,7 +166,8 @@ After each refresh, ADO Pulse compares the new list with the previous one (`Noti
 and announces events it hasn't seen before, as well as your pull requests that start failing,
 become ready or complete. Events from before ADO Pulse started aren't announced: they're in the
 panel. When there's a lot at once, it posts the three newest and one "more updates" notification.
-Changing a setting or time passing never causes a notification.
+Changing a setting or time passing never causes a notification. Clicking one opens the comment it's
+about, and marks the pull request seen.
 
 ## The brief
 

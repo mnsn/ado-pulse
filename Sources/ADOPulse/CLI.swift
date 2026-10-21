@@ -53,13 +53,15 @@ enum CLI {
             printTable(loaded)
             return loaded.items.isEmpty && loaded.problem != nil ? 1 : 0
         }
+        // The demo never uses the Azure CLI, your settings or Azure DevOps.
         if arguments.contains("--orgs") {
-            return listOrganizations()
+            return options.demo ? listDemoOrganizations() : listOrganizations()
         }
         if arguments.contains("--chats") {
             return listChatLinks()
         }
         if arguments.contains("--watch") {
+            if options.demo { return watchDemo() }
             watch(options)
         }
         return nil
@@ -122,9 +124,17 @@ enum CLI {
         }
         if organizations.isEmpty {
             FileHandle.standardError.write(Data("No organizations chosen in the app yet: looking for yours…\n".utf8))
-            organizations = wait {
-                guard let all = try? await OrganizationDiscovery.memberships(client: client) else { return [] }
-                return await OrganizationDiscovery.withPullRequests(all, client: client)
+            let found: Result<OrganizationDiscovery.Found, ADOError> = wait {
+                do {
+                    return .success(try await OrganizationDiscovery.discover(client: client))
+                } catch {
+                    return .failure((error as? ADOError) ?? .network(error.localizedDescription))
+                }
+            }
+            switch found {
+            case .success(let found): organizations = found.withPullRequests
+            case .failure(let error):
+                return Loaded(organizations: [], items: [], problem: "Couldn't find your organizations: \(error.description)")
             }
         }
         let configuration = PulseEngine.Configuration(organizations: organizations, keepDoneFor: classifierOptions().keepDoneFor)
@@ -180,20 +190,25 @@ enum CLI {
 
     private static func listOrganizations() -> Int32 {
         let client = ADOClient(tokens: AzureCLITokenProvider())
-        let result: Result<([String], [String]), ADOError> = wait {
+        let result: Result<([String], OrganizationDiscovery.Probe), ADOError> = wait {
             do {
                 let all = try await OrganizationDiscovery.memberships(client: client)
-                return .success((all, await OrganizationDiscovery.withPullRequests(all, client: client)))
+                return .success((all, await OrganizationDiscovery.probe(all, client: client)))
             } catch {
                 return .failure((error as? ADOError) ?? .network(error.localizedDescription))
             }
         }
         switch result {
-        case .success(let (all, withPullRequests)):
+        case .success(let (all, probe)):
             let watched = Set(appDefaults?.stringArray(forKey: SettingsKey.organizations) ?? [])
-            print("\(all.count) organizations; \(withPullRequests.count) with pull requests (*); watched by the app (+)")
+            print("\(all.count) organizations; \(probe.withPullRequests.count) with pull requests (*); watched by the app (+)")
             for name in all {
-                print("\(withPullRequests.contains(name) ? "*" : " ")\(watched.contains(name) ? "+" : " ") \(name)")
+                let mark = probe.withPullRequests.contains(name) ? "*" : probe.failures[name] != nil ? "?" : " "
+                print("\(mark)\(watched.contains(name) ? "+" : " ") \(name)")
+            }
+            if let failure = probe.failures.min(by: { $0.key < $1.key }) {
+                FileHandle.standardError.write(Data("Couldn't check \(probe.failures.count) (?), such as \(failure.key): \(failure.value.description)\n".utf8))
+                return 1
             }
             return 0
         case .failure(let error):
@@ -234,6 +249,26 @@ enum CLI {
             print([pad(Elapsed.short(since: link.sentAt, now: now), 7), pad(link.appName, 10), pad(link.sender ?? "", 28),
                    "\(link.key)  \(link.messageURL == nil ? "" : "(message link)")"].joined(separator: " "))
         }
+        return 0
+    }
+
+    private static func listDemoOrganizations() -> Int32 {
+        print("1 organization; 1 with pull requests (*); watched by the app (+)")
+        print("*+ \(DemoData.organization)")
+        return 0
+    }
+
+    /// The made-up pull requests, then the demo's one change a second later, as `--watch` prints them.
+    private static func watchDemo() -> Int32 {
+        setvbuf(stdout, nil, _IOLBF, 0)
+        print("Watching \(DemoData.organization), made-up pull requests")
+        let now = Date()
+        let printer = WatchPrinter(seen: DemoData.seenState(now: now), options: ClassifierOptions(), links: ChatLinkState())
+        let snapshot = DemoData.snapshot(now: now)
+        printer.print(snapshot)
+        Thread.sleep(forTimeInterval: 1)
+        printer.print(DemoData.update(snapshot, at: Date()))
+        print("That's all the demo does.")
         return 0
     }
 

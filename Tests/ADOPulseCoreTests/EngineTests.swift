@@ -80,6 +80,19 @@ import Testing
         #expect(NotificationPlanner.plan(previous: after, current: after, notBefore: t(0)).isEmpty)
     }
 
+    @Test func eachEventLinksToItsOwnThread() {
+        // The pull request's own link goes to the mention; the reply's notification goes to the reply.
+        let mention = PREvent(id: "c2.1", kind: .mention, at: t(20), actor: "Priya Shah", text: "@Robin Diaz?", threadId: 2)
+        let vote = PREvent(id: "v3", kind: .changesRequested, at: t(15), actor: "Alex Kim")
+        var item = snapshot(1, group: .needsYou, reason: .mentioned, events: [mention, reply, vote])
+        item.url = item.pageURL(thread: 2)
+        let notes = NotificationPlanner.plan(previous: [snapshot(1, group: .waiting)], current: [item], notBefore: t(0))
+        let links = Dictionary(uniqueKeysWithValues: notes.map { ($0.title, $0.url?.absoluteString) })
+        #expect(links["Priya Shah mentioned you"] == item.pageURL(thread: 2).absoluteString)
+        #expect(links["Sam Rivera replied"] == item.pageURL(thread: 1).absoluteString)
+        #expect(links["Alex Kim is waiting for you"] == "https://dev.azure.com/contoso/Shop/_git/shop-web/pullrequest/1")
+    }
+
     @Test func oldEventsArentAnnounced() {
         let after = [snapshot(1, group: .needsYou, events: [reply])]
         #expect(NotificationPlanner.plan(previous: [], current: after, notBefore: t(11)).isEmpty)
@@ -246,6 +259,20 @@ import Testing
         #expect(server.requests.count == 8)
     }
 
+    @Test func policiesYouCantReadAreUnknownNotNone() async throws {
+        let now = Date()
+        let server = StubServer()
+        server.serveOrganization(mine: [Fixture.pullRequest(1, reviewers: [Fixture.reviewer(People.sam, vote: 10)],
+                                                            created: now.addingTimeInterval(-day))])
+        server.on("/_apis/policy/evaluations") { _ in .status(403) }
+        let snapshot = await PulseEngine.loadOnce(
+            client: server.client(), configuration: PulseEngine.Configuration(organizations: [Fixture.org])
+        )
+        let details = try #require(snapshot.records.first?.details)
+        #expect(!details.checksKnown)
+        #expect(classify(snapshot, now: now)[1]?.group == .waiting)
+    }
+
     @Test func reportsSigningInProblems() async {
         let server = StubServer()
         server.serveOrganization()
@@ -347,6 +374,51 @@ import Testing
         let snapshot = await engine.currentSnapshot()
         #expect(snapshot.records.map(\.pullRequest.status) == [.abandoned, .active])
         #expect(classify(snapshot, now: now)[1]?.reason == .abandoned)
+    }
+
+    @Test func signingInAsSomeoneElseStartsOver() async throws {
+        let server = StubServer()
+        let tokens = server.tokens
+        await tokens.signIn(as: "tenant/robin")
+        server.serveOrganization(mine: [Fixture.pullRequest(1)])
+        let engine = engine(server, tokens: tokens)
+        await engine.refreshNow()
+        #expect(await engine.currentSnapshot().records.map(\.id.number) == [1])
+
+        // Sam signs in to the Azure CLI: Azure DevOps knows them by another identity, with other pull requests.
+        let sam = People.sam.id
+        server.serveOrganization(me: sam, mine: [Fixture.pullRequest(2, author: People.sam)])
+        await tokens.signIn(as: "tenant/sam")
+        await engine.refreshNow()
+        let snapshot = await engine.currentSnapshot()
+        #expect(snapshot.records.map(\.id.number) == [2])
+        #expect(snapshot.records.allSatisfy { $0.me == sam })
+    }
+
+    @Test func keepsLookingUpPullRequestsThatLeftTheList() async throws {
+        let now = Date()
+        let server = StubServer()
+        let numbers = Array(1...7)
+        server.serveOrganization(mine: numbers.map { Fixture.pullRequest($0) })
+        let engine = engine(server)
+        await engine.refreshNow()
+
+        // All seven were abandoned at once, more than a refresh looks up, and reading one fails the first time.
+        server.on("/_apis/git/pullrequests", query: ["searchCriteria.status": "active", "searchCriteria.creatorId": Fixture.me],
+                  json: Fixture.list([]))
+        let attempts = Locked(0)
+        for number in numbers {
+            server.on("/_apis/git/pullrequests/\(number)") { _ in
+                if number == 1, attempts.increment() == 1 { return .status(500) }
+                return .json(Fixture.pullRequest(number, status: "abandoned", closed: now.addingTimeInterval(-minute)))
+            }
+        }
+        await engine.refreshNow()
+        await engine.refreshNow()
+        let snapshot = await engine.currentSnapshot()
+        #expect(snapshot.records.map(\.id.number) == numbers)
+        #expect(snapshot.records.allSatisfy { $0.pullRequest.status == .abandoned })
+        #expect(attempts.value == 2)
     }
 
     @Test func backsOffWhenThrottled() async {

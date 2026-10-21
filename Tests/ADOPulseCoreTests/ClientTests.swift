@@ -92,6 +92,21 @@ import Testing
         #expect(undated.expiresOn == t(30 * minute))
     }
 
+    @Test func readsWhoATokenIsFor() throws {
+        func jwt(_ claims: String) -> String {
+            let payload = Data(claims.utf8).base64EncodedString()
+                .replacingOccurrences(of: "+", with: "-").replacingOccurrences(of: "/", with: "_").replacingOccurrences(of: "=", with: "")
+            return "eyJhbGciOiJub25lIn0.\(payload).c2ln"
+        }
+        let token = jwt(#"{"tid":"T1","oid":"O-1","upn":"robin@contoso.com"}"#)
+        #expect(AccessToken.account(inJWT: token) == "t1/o-1")
+        let parsed = try AzureCLITokenProvider.parseToken(Data(#"{"accessToken": "\#(token)", "expires_on": 1792564306}"#.utf8), now: t(0))
+        #expect(parsed.account == "t1/o-1")
+        #expect(AccessToken.account(inJWT: jwt(#"{"sub":"S"}"#)) == "/s")
+        #expect(AccessToken.account(inJWT: "opaque") == nil)
+        #expect(AccessToken.account(inJWT: "a.b.c") == nil)
+    }
+
     @Test func rejectsOutputWithoutAToken() {
         #expect(throws: AuthError.failed("The Azure CLI returned no token.")) {
             try AzureCLITokenProvider.parseToken(Data("{}".utf8), now: t(0))
@@ -192,6 +207,51 @@ import Testing
         let result = try await ProcessRunner().run(URL(fileURLWithPath: "/bin/sleep"), arguments: ["30"], environment: nil, timeout: 0.5)
         #expect(result.status != 0)
         #expect(Date().timeIntervalSince(start) < 10)
+    }
+
+    @Test(.timeLimit(.minutes(1)))
+    func endsAProgramThatIgnoresBeingAskedToStop() async throws {
+        let start = Date()
+        let result = try await ProcessRunner().run(
+            URL(fileURLWithPath: "/bin/sh"), arguments: ["-c", "trap '' TERM; sleep 30"], environment: nil, timeout: 0.3
+        )
+        #expect(result.status == SIGKILL)
+        #expect(Date().timeIntervalSince(start) < 5)
+    }
+
+    @Test(.timeLimit(.minutes(1)))
+    func doesntWaitForWhatTheProgramLeftRunning() async throws {
+        // The shell exits at once, but the sleep it started in the background keeps its output open.
+        let start = Date()
+        let result = try await ProcessRunner().run(
+            URL(fileURLWithPath: "/bin/sh"), arguments: ["-c", "sleep 30 & echo $!"], environment: nil, timeout: 20
+        )
+        #expect(result.status == 0)
+        #expect(Date().timeIntervalSince(start) < 3)
+        // And what it left running is ended.
+        let child = try #require(pid_t(String(decoding: result.stdout, as: UTF8.self).trimmingCharacters(in: .whitespacesAndNewlines)))
+        var ended = false
+        for _ in 0..<100 where !ended {
+            ended = kill(child, 0) != 0 && errno == ESRCH
+            if !ended { try await Task.sleep(for: .milliseconds(20)) }
+        }
+        #expect(ended)
+    }
+
+    @Test func collectsLargeOutput() async throws {
+        let result = try await ProcessRunner().run(
+            URL(fileURLWithPath: "/bin/sh"), arguments: ["-c", "head -c 1000000 /dev/zero; head -c 300000 /dev/zero >&2"],
+            environment: nil, timeout: 10
+        )
+        #expect(result.status == 0)
+        #expect(result.stdout.count == 1_000_000)
+        #expect(result.stderr.count == 300_000)
+    }
+
+    @Test func reportsAProgramThatCantRun() async {
+        await #expect(throws: (any Error).self) {
+            try await ProcessRunner().run(URL(fileURLWithPath: "/nonexistent/az"), arguments: [], environment: nil, timeout: 5)
+        }
     }
 }
 
@@ -355,9 +415,30 @@ extension Locked where Value == Int {
         server.on("/Contoso/_apis/git/pullrequests", json: Fixture.list([Fixture.pullRequest(1)]))
 
         let client = server.client()
-        let all = try await OrganizationDiscovery.memberships(client: client)
-        #expect(all == ["Contoso", "fabrikam", "locked", "northwind"])
-        #expect(await OrganizationDiscovery.withPullRequests(all, client: client) == ["Contoso", "northwind"])
+        let found = try await OrganizationDiscovery.discover(client: client)
+        #expect(found.all == ["Contoso", "fabrikam", "locked", "northwind"])
+        // locked can't be read: you have nothing there.
+        #expect(found.withPullRequests == ["Contoso", "northwind"])
         #expect(server.requests.allSatisfy { $0.httpMethod == "GET" })
+    }
+
+    @Test func anOrganizationThatCouldntBeCheckedIsntOneWithoutPullRequests() async throws {
+        let server = StubServer()
+        server.on("/_apis/profile/profiles/me", json: ["id": "profile-id", "publicAlias": "alias"])
+        server.on("/_apis/accounts", query: ["memberId": "alias"], json: Fixture.list([["accountName": "contoso"], ["accountName": "fabrikam"]]))
+        server.on("/contoso/_apis/connectionData") { _ in .failure(.notConnectedToInternet) }
+        server.on("/fabrikam/_apis/connectionData") { _ in .status(403) }
+        let client = server.client()
+
+        let probe = await OrganizationDiscovery.probe(["contoso", "fabrikam"], client: client)
+        #expect(probe.withPullRequests.isEmpty)
+        #expect(probe.failures == ["contoso": .offline])
+        // Finding none because it couldn't tell is an error, so discovery tries again rather than settling on none.
+        await #expect(throws: ADOError.offline) { try await OrganizationDiscovery.discover(client: client) }
+
+        // Once contoso answers, its pull request is found.
+        server.on("/contoso/_apis/connectionData", json: ["authenticatedUser": ["id": "ME"]])
+        server.on("/contoso/_apis/git/pullrequests", json: Fixture.list([Fixture.pullRequest(1)]))
+        #expect(try await OrganizationDiscovery.discover(client: client).withPullRequests == ["contoso"])
     }
 }

@@ -294,6 +294,18 @@ import Testing
         #expect(old.events.isEmpty)
     }
 
+    @Test func votesFromRemovedReviewersDontCount() throws {
+        // Sam asked for changes and Priya approved, and then both were removed from the pull request.
+        let pr = makePR(reviewers: [Reviewer(person: People.alex, vote: .none)])
+        let votes = [
+            Activity(threadId: 1, kind: .vote, at: t(-2 * hour), actor: People.sam, vote: .waitingForAuthor),
+            Activity(threadId: 2, kind: .vote, at: t(-hour), actor: People.priya, vote: .approved),
+        ]
+        let snapshot = try #require(classify(pr, details: makeDetails(for: pr, checks: passing(), activity: votes)))
+        #expect(snapshot.group != .needsYou)
+        #expect(snapshot.events.isEmpty)
+    }
+
     @Test func approvalsAreNewsButDontNeedYou() throws {
         let pr = makePR(reviewers: [Reviewer(person: People.sam, vote: .approved)])
         let approval = Activity(threadId: 4, kind: .vote, at: t(-hour), actor: People.sam, vote: .approved)
@@ -346,6 +358,29 @@ import Testing
         var approved = noPolicy
         approved.reviewers = [Reviewer(person: People.sam, vote: .approved)]
         #expect(classify(approved, details: makeDetails(for: approved, checks: build, lastActivity: t(-hour)))?.group == .ready)
+    }
+
+    @Test func readyOnlyWithCurrentReadablePolicies() throws {
+        let pr = makePR(reviewers: [Reviewer(person: People.sam, vote: .approved)])
+        let details = makeDetails(for: pr, checks: passing(), lastActivity: t(-hour))
+        let ready = try #require(classify(pr, details: details))
+        #expect(ready.group == .ready)
+
+        // A push since the details were read: their passing checks may not apply any more.
+        var pushed = pr
+        pushed.sourceCommit = "abd"
+        let outdated = try #require(classify(pushed, details: details))
+        #expect(outdated.group == .waiting)
+        #expect(outdated.headline == "Waiting for reviewers")
+        // And it isn't announced as ready.
+        let before = try #require(classify(pushed, details: makeDetails(for: pushed, checks: [Check(name: "CI", kind: .build, state: .running)])))
+        #expect(NotificationPlanner.plan(previous: [before], current: [outdated], notBefore: t(-day)).isEmpty)
+
+        // A project whose policies you can't read: nobody can tell it's ready.
+        let unreadable = try #require(classify(pr, details: makeDetails(for: pr, checksKnown: false, lastActivity: t(-hour))))
+        #expect(unreadable.group == .waiting)
+        #expect(unreadable.headline == "Can't read its policies")
+        #expect(unreadable.detail == "Approved by Sam Rivera")
     }
 
     @Test func waiting() throws {

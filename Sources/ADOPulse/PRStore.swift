@@ -351,17 +351,21 @@ final class PRStore: ObservableObject {
 
     /// Opens the pull request (at the comment that needs you) and marks it seen.
     func open(_ item: PRSnapshot) {
-        settings.markSeen([item.key], at: max(Date(), item.events.map(\.at).max() ?? .distantPast))
+        markSeen(item)
         AzureDevOps.open(item.url)
     }
 
-    /// Opens a pull request from a notification, and marks it seen like a click in the panel.
+    /// Opens what a notification is about (its own comment, rather than the one the panel would open), and marks
+    /// the pull request seen like a click in the panel.
     func openFromNotification(key: String?, url: URL) {
         if let item = items.first(where: { $0.key.description == key }) {
-            open(item)
-        } else {
-            AzureDevOps.open(url)
+            markSeen(item)
         }
+        AzureDevOps.open(url)
+    }
+
+    private func markSeen(_ item: PRSnapshot) {
+        settings.markSeen([item.key], at: max(Date(), item.events.map(\.at).max() ?? .distantPast))
     }
 
     /// Marks a group's pull requests seen: Needs You moves on, Done empties. Each is seen up to what the panel
@@ -394,15 +398,15 @@ final class PRStore: ObservableObject {
         lastDiscovery = Date()
         Task {
             do {
-                let all = try await OrganizationDiscovery.memberships(client: client)
-                let withPullRequests = await OrganizationDiscovery.withPullRequests(all, client: client)
-                settings.knownOrganizations = all
+                // Throws when it couldn't tell, for example offline: it tries again, rather than settling on none.
+                let found = try await OrganizationDiscovery.discover(client: client)
+                settings.knownOrganizations = found.all
                 // Keep the ones you chose yourself too, spelled the way Azure DevOps does.
-                settings.organizations = OrganizationDiscovery.merged(settings.organizations, preferring: withPullRequests)
+                settings.organizations = OrganizationDiscovery.merged(settings.organizations, preferring: found.withPullRequests)
                 settings.hasDiscovered = true
                 discovery = .idle
                 discoveryProblem = nil
-                Log.app.info("Found \(all.count) organizations, \(withPullRequests.count) with pull requests")
+                Log.app.info("Found \(found.all.count) organizations, \(found.withPullRequests.count) with pull requests")
             } catch {
                 let message = (error as? ADOError)?.description ?? error.localizedDescription
                 discovery = .failed(message)

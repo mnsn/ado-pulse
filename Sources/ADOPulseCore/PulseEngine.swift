@@ -116,6 +116,13 @@ public actor PulseEngine {
         var role: PRRole
     }
 
+    /// One of your pull requests that left the active list without showing up as completed.
+    private struct Vanished: Sendable {
+        var pullRequest: PullRequest
+        /// When it left the list.
+        var since: Date
+    }
+
     private struct OrganizationLists: Sendable {
         var me: String
         var name: String?
@@ -133,6 +140,8 @@ public actor PulseEngine {
 
     /// Organization → your identity ID there.
     private var identities: [String: String] = [:]
+    /// Whose sign-in the identities, lists and details are for.
+    private var account: String?
     private var userName: String?
     private var firstLoaded: [String: Date] = [:]
     /// Pull requests people sent you, to list even when you're not on them.
@@ -143,6 +152,9 @@ public actor PulseEngine {
     private var done: [PRKey: PullRequest] = [:]
     private var details: [PRKey: PRDetails] = [:]
     private var entries: [PRKey: RefreshPlanner.Entry] = [:]
+    /// Your pull requests that left the active list without completing: abandoned, or completed just now. Each
+    /// is looked up by its ID, a few per refresh, until that works or it's too old to show as done.
+    private var vanished: [PRKey: Vanished] = [:]
     private var problem: PulseProblem?
     private var refreshedAt: Date?
     private var hasLoaded = false
@@ -193,6 +205,7 @@ public actor PulseEngine {
             let kept = Set(configuration.organizations)
             active = active.filter { kept.contains($0.key.organization) }
             done = done.filter { kept.contains($0.key.organization) }
+            vanished = vanished.filter { kept.contains($0.key.organization) }
             firstLoaded = firstLoaded.filter { kept.contains($0.key) }
             publish()
         }
@@ -239,12 +252,19 @@ public actor PulseEngine {
         }
 
         // Signing in comes first: nothing works without a token, and a failure here says exactly what's wrong.
+        let token: AccessToken
         do {
-            _ = try await client.tokens.token()
+            token = try await client.tokens.token()
         } catch {
             problem = PulseProblem.from((error as? AuthError).map(ADOError.auth) ?? .auth(.failed(String(describing: error))))
             failures += 1
             return
+        }
+        // Someone else signed in: your identity in each organization, and everything read as the last one, is out
+        // of date.
+        if let signedIn = token.account {
+            if let account, account != signedIn { forgetAccount() }
+            account = signedIn
         }
 
         let startedAt = now()
@@ -299,19 +319,34 @@ public actor PulseEngine {
         failures = 0
 
         // Your pull requests that left the active list without completing were abandoned (or completed
-        // just now): ask about each, a few per refresh.
+        // just now): look each up by its ID, a few per refresh, and again next time if that fails.
         let succeeded = Set(organizations).subtracting(errors.map(\.0))
-        let vanished = active.values
-            .filter { $0.role == .author && succeeded.contains($0.pullRequest.key.organization) }
-            .map(\.pullRequest)
-            .filter { listed[$0.key] == nil && completed[$0.key] == nil }
-        for pr in vanished.prefix(5) {
-            let url = ADOEndpoint.pullRequest(organization: pr.key.organization, id: pr.key.number)
-            if let dto = try? await client.get(url, as: ADOPullRequest.self) {
-                let fresh = PullRequest(organization: pr.key.organization, dto)
-                if fresh.status == .completed || fresh.status == .abandoned {
-                    completed[fresh.key] = fresh
-                }
+        for item in active.values where item.role == .author && succeeded.contains(item.pullRequest.key.organization) {
+            let key = item.pullRequest.key
+            if listed[key] == nil, completed[key] == nil, vanished[key] == nil {
+                vanished[key] = Vanished(pullRequest: item.pullRequest, since: startedAt)
+            }
+        }
+        // Back in the list, listed as completed, or gone longer than Done shows anything.
+        vanished = vanished.filter { key, item in listed[key] == nil && completed[key] == nil && item.since > closedSince }
+        let due = vanished.values
+            .filter { succeeded.contains($0.pullRequest.key.organization) }
+            .sorted { ($0.since, $0.pullRequest.key) < ($1.since, $1.pullRequest.key) }
+            .prefix(5)
+        for item in due {
+            let key = item.pullRequest.key
+            do {
+                let dto = try await client.get(ADOEndpoint.pullRequest(organization: key.organization, id: key.number), as: ADOPullRequest.self)
+                let fresh = PullRequest(organization: key.organization, dto)
+                if fresh.status == .completed || fresh.status == .abandoned { completed[key] = fresh }
+                vanished[key] = nil
+            } catch ADOError.notFound {
+                // Deleted, or moved somewhere you can't read: nothing to show.
+                vanished[key] = nil
+            } catch ADOError.throttled {
+                break
+            } catch {
+                // Try again next refresh.
             }
         }
         for (key, pr) in done where completed[key] == nil && listed[key] == nil {
@@ -321,6 +356,7 @@ public actor PulseEngine {
         let watched = Set(self.configuration.organizations)
         listed = listed.filter { watched.contains($0.key.organization) }
         completed = completed.filter { watched.contains($0.key.organization) }
+        vanished = vanished.filter { watched.contains($0.key.organization) }
         firstLoaded = firstLoaded.filter { watched.contains($0.key) }
         await addLinked(to: &listed, at: startedAt)
         active = listed
@@ -376,6 +412,18 @@ public actor PulseEngine {
                 linkedFailures[key] = date
             }
         }
+    }
+
+    private func forgetAccount() {
+        identities = [:]
+        userName = nil
+        firstLoaded = [:]
+        active = [:]
+        done = [:]
+        details = [:]
+        entries = [:]
+        vanished = [:]
+        linkedFailures = [:]
     }
 
     /// Fetches details a few pull requests at a time. Returns the error if Azure DevOps asked to slow down.
@@ -467,11 +515,12 @@ public actor PulseEngine {
             ), as: ADOList<ADOThread>.self).value
         }
         let (policyResult, threadResult) = await (evaluations, threads)
-        let policies: [ADOPolicyEvaluation]
+        let policies: [ADOPolicyEvaluation]?
         switch policyResult {
         case .success(let value): policies = value
-        // Some projects don't let everyone read their policies; the pull request still has its threads.
-        case .failure(.forbidden), .failure(.notFound): policies = []
+        // Some projects don't let everyone read their policies. The pull request still has its threads, but
+        // whether it's ready is unknown, which isn't the same as having no policies.
+        case .failure(.forbidden), .failure(.notFound): policies = nil
         case .failure(let error): return .failure(error)
         }
         switch threadResult {

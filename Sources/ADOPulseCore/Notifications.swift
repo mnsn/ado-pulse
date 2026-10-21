@@ -119,9 +119,10 @@ public enum NotificationPlanner {
             title = "\(actor) approved"
             body = snapshot.detail
         }
+        // Its own thread: the pull request's link goes to the comment that needs you most, which may be another one.
         return PulseNotification(
             id: "\(snapshot.id):\(event.id)", title: title, subtitle: snapshot.title,
-            body: body ?? snapshot.repository, url: snapshot.url, key: snapshot.key, at: event.at
+            body: body ?? snapshot.repository, url: snapshot.pageURL(thread: event.threadId), key: snapshot.key, at: event.at
         )
     }
 }

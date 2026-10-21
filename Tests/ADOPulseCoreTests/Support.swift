@@ -51,11 +51,12 @@ func makePR(
 }
 
 func makeDetails(
-    for pr: PullRequest, checks: [Check] = [], threads: [ReviewThread] = [], activity: [Activity] = [], lastActivity: Date? = nil
+    for pr: PullRequest, checks: [Check] = [], checksKnown: Bool = true, threads: [ReviewThread] = [], activity: [Activity] = [],
+    lastActivity: Date? = nil
 ) -> PRDetails {
     let dates = threads.flatMap { $0.comments.map(\.publishedAt) } + activity.map(\.at)
     return PRDetails(
-        fetchedAt: t(0), fingerprint: pr.fingerprint, checks: checks, threads: threads, activity: activity,
+        fetchedAt: t(0), fingerprint: pr.fingerprint, checks: checks, checksKnown: checksKnown, threads: threads, activity: activity,
         lastActivity: lastActivity ?? dates.max()
     )
 }
@@ -169,6 +170,7 @@ enum Fixture {
 actor FakeTokens: AccessTokenProvider {
     private var value: String
     private var error: AuthError?
+    private var account: String?
     private(set) var fetches = 0
     private(set) var invalidations = 0
 
@@ -180,7 +182,11 @@ actor FakeTokens: AccessTokenProvider {
     func token() async throws -> AccessToken {
         fetches += 1
         if let error { throw error }
-        return AccessToken(value: value, expiresOn: .distantFuture)
+        return AccessToken(value: value, expiresOn: .distantFuture, account: account)
+    }
+
+    func signIn(as account: String?) {
+        self.account = account
     }
 
     func invalidate() {
