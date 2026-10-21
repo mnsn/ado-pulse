@@ -55,7 +55,8 @@ public struct ChatLink: Sendable, Equatable, Hashable, Codable, Identifiable {
     public var app: String
     public var sender: String?
     public var sentAt: Date
-    /// Notification Center's identity for the notification, so it's counted once.
+    /// The app's identity for the notification (Notification Center's, when it gives none), so it's counted
+    /// once. An app can post a new message under the same one, replacing the notification.
     public var notificationKey: String
     /// Teams: the chat and the message, to open the message in Teams.
     public var conversation: String?
@@ -74,7 +75,8 @@ public struct ChatLink: Sendable, Equatable, Hashable, Codable, Identifiable {
         self.messageID = messageID
     }
 
-    public var id: String { "\(notificationKey)#\(link.key)" }
+    /// The app, its notification, and the pull request: another app may use the same notification identifier.
+    public var id: String { "\(app)|\(notificationKey)#\(link.key)" }
     public var key: PRKey { link.key }
     public var appName: String { ChatApps.name(for: app) }
 
@@ -251,15 +253,23 @@ public struct ChatLinkState: Sendable, Codable, Equatable {
         self.links = links
     }
 
-    /// Adds the links not known yet. Returns whether anything changed.
+    /// Adds the links not known yet, and takes the newer message when an app replaced a notification with one
+    /// about the same pull request. Returns whether anything changed.
     @discardableResult
     public mutating func merge(_ found: [ChatLink]) -> Bool {
-        let known = Set(links.map(\.id))
-        let new = found.filter { !known.contains($0.id) }
-        guard !new.isEmpty else { return false }
-        links.append(contentsOf: new)
-        links.sort { ($0.sentAt, $0.id) < ($1.sentAt, $1.id) }
-        return true
+        var changed = false
+        for link in found {
+            if let index = links.firstIndex(where: { $0.id == link.id }) {
+                let known = links[index]
+                guard link.sentAt > known.sentAt || (link.sentAt == known.sentAt && link.messageID != known.messageID) else { continue }
+                links[index] = link
+            } else {
+                links.append(link)
+            }
+            changed = true
+        }
+        if changed { links.sort { ($0.sentAt, $0.id) < ($1.sentAt, $1.id) } }
+        return changed
     }
 
     @discardableResult

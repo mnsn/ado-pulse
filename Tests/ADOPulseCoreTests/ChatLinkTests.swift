@@ -253,6 +253,29 @@ private func waitFor(_ what: String, timeout: Duration = .seconds(10), until con
         #expect(data.flatMap { try? JSONDecoder().decode(ChatLinkState.self, from: $0) } == ChatLinkState(links: [link(7)]))
     }
 
+    @Test func appsAndNewerMessagesAreTold() {
+        var state = ChatLinkState()
+        state.merge([link(7, key: "chat-1", at: t(0))])
+        // Slack happens to use the same identifier for its notification about the same pull request.
+        var slack = link(7, key: "chat-1", at: t(60))
+        slack.app = Chats.slack
+        let addedSlack = state.merge([slack])
+        #expect(addedSlack)
+        #expect(state.links.count == 2)
+
+        // Teams replaces its notification with a newer message: the link is the newer one.
+        var newer = link(7, key: "chat-1", at: t(120))
+        newer.messageID = "1700000120000"
+        let tookNewer = state.merge([newer])
+        #expect(tookNewer)
+        #expect(state.links.count == 2)
+        #expect(state.links.first { $0.app == Chats.teams }?.sentAt == t(120))
+        // The older one, read again, changes nothing.
+        let tookOlder = state.merge([link(7, key: "chat-1", at: t(0))])
+        #expect(!tookOlder)
+        #expect(state.links.first { $0.app == Chats.teams }?.messageID == "1700000120000")
+    }
+
     @Test func usesTheWatchedOrganizationsSpelling() {
         let canonical = ChatLinkState.canonical([link(7, organization: "CONTOSO"), link(8, organization: "fabrikam")], organizations: ["Contoso"])
         #expect(canonical.map(\.link.organization) == ["Contoso", "fabrikam"])
