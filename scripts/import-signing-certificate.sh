@@ -23,8 +23,9 @@ KEYCHAIN_PASSWORD="$(/usr/bin/openssl rand -base64 24)"
 security create-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN"
 security set-keychain-settings -lut 21600 "$KEYCHAIN"
 security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN"
+# Non-extractable (-x): the steps after this one can sign with it, but can't export it.
 security import "$WORK/identity.p12" -k "$KEYCHAIN" -f pkcs12 -P "$RELEASE_SIGNING_P12_PASSWORD" \
-    -T /usr/bin/codesign >/dev/null
+    -x -T /usr/bin/codesign >/dev/null
 # Lets codesign use the key without asking, which it couldn't do on a build machine.
 security set-key-partition-list -S apple-tool:,apple: -s -k "$KEYCHAIN_PASSWORD" "$KEYCHAIN" >/dev/null
 

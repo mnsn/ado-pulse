@@ -31,7 +31,8 @@ make app           # build "ADO Pulse.app" into ./build without installing
 make package       # build the universal app for a release, check it and zip it into build/release
 make install       # build the app, copy it to ~/Applications and launch it
 make icon          # regenerate Resources/AppIcon.icns
-make signing-identity  # once per Mac: a certificate to sign builds with, so Full Disk Access survives rebuilds
+make signing-identity  # once per Mac: a certificate to sign builds with, so Full Disk Access survives rebuilds;
+                       # each build then asks for your login password: choose Allow, never Always Allow
 ```
 
 [How it works](docs/how-it-works.md) explains where the data comes from and how a pull request's

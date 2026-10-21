@@ -65,8 +65,8 @@ else
         KEYCHAIN_ARGS=(--keychain "$KEYCHAIN")
     fi
     if ! codesign --force --options runtime --timestamp=none --sign "$IDENTITY" ${KEYCHAIN_ARGS[@]+"${KEYCHAIN_ARGS[@]}"} "$APP"; then
-        echo "error: codesign can't use the \"$IDENTITY\" key. Run 'make signing-identity' and choose" >&2
-        echo "       Always Allow when macOS asks, or build with --ad-hoc." >&2
+        echo "error: codesign couldn't use the \"$IDENTITY\" key. When macOS asks whether it may, enter your login" >&2
+        echo "       password and choose Allow (never Always Allow), or build with --ad-hoc." >&2
         exit 1
     fi
 fi

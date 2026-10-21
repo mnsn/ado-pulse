@@ -109,8 +109,11 @@ make install     # builds "ADO Pulse.app", copies it to ~/Applications and launc
 
 Then turn on **Launch at Login** as above. To update, pull and run `make install` again; to remove
 it, run `make uninstall`. If you'll use **Pull Requests Sent in Chats**, run `make signing-identity`
-once before `make install`, so the Full Disk Access you give it survives the next build. When macOS
-asks whether codesign may use the new key, enter your login password and choose **Always Allow**.
+once before `make install`, so the Full Disk Access you give it survives the next build. macOS then
+asks for your login password each time a build is signed: choose **Allow**, never Always Allow, which
+would let anything running as you sign code as ADO Pulse and get its Full Disk Access. (If you ran
+`make signing-identity` before this version, run `scripts/make-signing-identity.sh --replace` once:
+that key let codesign use it without asking.)
 
 ## Signing in
 
