@@ -370,9 +370,30 @@ extension Locked where Value == Int {
         server.on("/Contoso/_apis/git/pullrequests", json: Fixture.list([Fixture.pullRequest(1)]))
 
         let client = server.client()
-        let all = try await OrganizationDiscovery.memberships(client: client)
-        #expect(all == ["Contoso", "fabrikam", "locked", "northwind"])
-        #expect(await OrganizationDiscovery.withPullRequests(all, client: client) == ["Contoso", "northwind"])
+        let found = try await OrganizationDiscovery.discover(client: client)
+        #expect(found.all == ["Contoso", "fabrikam", "locked", "northwind"])
+        // locked can't be read: you have nothing there.
+        #expect(found.withPullRequests == ["Contoso", "northwind"])
         #expect(server.requests.allSatisfy { $0.httpMethod == "GET" })
+    }
+
+    @Test func anOrganizationThatCouldntBeCheckedIsntOneWithoutPullRequests() async throws {
+        let server = StubServer()
+        server.on("/_apis/profile/profiles/me", json: ["id": "profile-id", "publicAlias": "alias"])
+        server.on("/_apis/accounts", query: ["memberId": "alias"], json: Fixture.list([["accountName": "contoso"], ["accountName": "fabrikam"]]))
+        server.on("/contoso/_apis/connectionData") { _ in .failure(.notConnectedToInternet) }
+        server.on("/fabrikam/_apis/connectionData") { _ in .status(403) }
+        let client = server.client()
+
+        let probe = await OrganizationDiscovery.probe(["contoso", "fabrikam"], client: client)
+        #expect(probe.withPullRequests.isEmpty)
+        #expect(probe.failures == ["contoso": .offline])
+        // Finding none because it couldn't tell is an error, so discovery tries again rather than settling on none.
+        await #expect(throws: ADOError.offline) { try await OrganizationDiscovery.discover(client: client) }
+
+        // Once contoso answers, its pull request is found.
+        server.on("/contoso/_apis/connectionData", json: ["authenticatedUser": ["id": "ME"]])
+        server.on("/contoso/_apis/git/pullrequests", json: Fixture.list([Fixture.pullRequest(1)]))
+        #expect(try await OrganizationDiscovery.discover(client: client).withPullRequests == ["contoso"])
     }
 }

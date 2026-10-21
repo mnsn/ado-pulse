@@ -274,15 +274,15 @@ final class PRStore: ObservableObject {
         lastDiscovery = Date()
         Task {
             do {
-                let all = try await OrganizationDiscovery.memberships(client: client)
-                let withPullRequests = await OrganizationDiscovery.withPullRequests(all, client: client)
-                settings.knownOrganizations = all
+                // Throws when it couldn't tell, for example offline: it tries again, rather than settling on none.
+                let found = try await OrganizationDiscovery.discover(client: client)
+                settings.knownOrganizations = found.all
                 // Keep the ones you chose yourself too, spelled the way Azure DevOps does.
-                settings.organizations = OrganizationDiscovery.merged(settings.organizations, preferring: withPullRequests)
+                settings.organizations = OrganizationDiscovery.merged(settings.organizations, preferring: found.withPullRequests)
                 settings.hasDiscovered = true
                 discovery = .idle
                 discoveryProblem = nil
-                Log.app.info("Found \(all.count) organizations, \(withPullRequests.count) with pull requests")
+                Log.app.info("Found \(found.all.count) organizations, \(found.withPullRequests.count) with pull requests")
             } catch {
                 let message = (error as? ADOError)?.description ?? error.localizedDescription
                 discovery = .failed(message)
