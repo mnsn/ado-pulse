@@ -277,6 +277,7 @@ private final class SpawnedProcess: @unchecked Sendable {
     private var reading: [DispatchSourceRead] = []
     private var exitWatch: DispatchSourceProcess?
     private var status: Int32?
+    private var reaped = false
     private var continuation: CheckedContinuation<ProcessResult, Never>?
 
     init(executable: URL, arguments: [String], environment: [String: String]?) throws {
@@ -337,11 +338,11 @@ private final class SpawnedProcess: @unchecked Sendable {
             reading.append(source)
         }
         let exitWatch = DispatchSource.makeProcessSource(identifier: pid, eventMask: .exit, queue: queue)
-        exitWatch.setEventHandler { self.reap(drainTime: drainTime) }
+        exitWatch.setEventHandler { self.reap(drainTime: drainTime, exited: true) }
         exitWatch.resume()
         self.exitWatch = exitWatch
         // It may have exited before the watch began.
-        reap(drainTime: drainTime)
+        reap(drainTime: drainTime, exited: false)
 
         // At the timeout, ask it (and whatever it started) to stop, then make it; and stop waiting soon after either way.
         queue.asyncAfter(deadline: .now() + timeout) {
@@ -372,9 +373,17 @@ private final class SpawnedProcess: @unchecked Sendable {
         }
     }
 
-    private func reap(drainTime: TimeInterval) {
+    /// Collects its exit status. Once told it `exited`, it waits for that: the exit can be reported a moment before
+    /// the status can be collected, and isn't reported again.
+    private func reap(drainTime: TimeInterval, exited: Bool) {
+        guard !reaped else { return }
         var raw: Int32 = 0
-        guard waitpid(pid, &raw, WNOHANG) == pid else { return }
+        var result: pid_t
+        repeat {
+            result = waitpid(pid, &raw, exited ? 0 : WNOHANG)
+        } while result == -1 && errno == EINTR
+        guard result == pid else { return }
+        reaped = true
         exitWatch?.cancel()
         // Reaped after giving up on it: the result is already out.
         guard status == nil else { return }

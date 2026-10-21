@@ -249,6 +249,23 @@ import Testing
         return false
     }
 
+    @Test(.timeLimit(.minutes(1)))
+    func noticesEveryExitRightAway() async throws {
+        // Many at once: an exit can be reported a moment before its status can be collected, and isn't reported again.
+        let start = Date()
+        try await withThrowingTaskGroup(of: Int32.self) { group in
+            for _ in 0..<200 {
+                group.addTask {
+                    try await ProcessRunner().run(URL(fileURLWithPath: "/bin/sh"), arguments: ["-c", "exit 0"], environment: nil, timeout: 20).status
+                }
+            }
+            for try await status in group {
+                #expect(status == 0)
+            }
+        }
+        #expect(Date().timeIntervalSince(start) < 15)
+    }
+
     @Test func collectsLargeOutput() async throws {
         let result = try await ProcessRunner().run(
             URL(fileURLWithPath: "/bin/sh"), arguments: ["-c", "head -c 1000000 /dev/zero; head -c 300000 /dev/zero >&2"],
