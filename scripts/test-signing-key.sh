@@ -13,10 +13,7 @@ cd "$(dirname "$0")/.."
 source scripts/signing.sh
 
 OPENSSL=/usr/bin/openssl
-# The keychains are made the way the release workflow makes its own: in RUNNER_TEMP on GitHub Actions, by a path
-# without symbolic links, and with the same settings. On GitHub's macOS 15 and 26, codesign --keychain didn't find
-# the identities in ones under /var/folders (through the /var link) without those settings.
-WORK="$(cd "$(mktemp -d "${RUNNER_TEMP:-${TMPDIR:-/tmp}}/signing-key-test.XXXXXX")" && pwd -P)"
+WORK="$(mktemp -d)"
 KEYCHAINS=()
 SEARCH_LIST=()
 PREFERENCE=""
@@ -36,7 +33,7 @@ FAILURES=0
 new_keychain() {
     security create-keychain -p "$KEYCHAIN_PASSWORD" "$1"
     KEYCHAINS+=("$1")
-    security set-keychain-settings -lut 21600 "$1"
+    security set-keychain-settings "$1"
     security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$1"
 }
 
@@ -94,6 +91,18 @@ signs_with() {
     "$@" || return 1
     requirement="$(/usr/bin/codesign -d -r- "$WORK/probe" 2>&1 | sed -n 's/^#* *designated => //p')"
     [[ "$requirement" == *"certificate leaf = H\"$expected\""* ]] || { echo "Signed: $requirement"; return 1; }
+}
+
+# Puts a keychain on the search list, until the end. codesign on macOS 15 and 26 finds an identity only in a keychain
+# there, even when told which, so the release workflow puts its own there too.
+add_to_search_list() {
+    local line current=()
+    while IFS= read -r line; do
+        line="$(printf '%s' "$line" | sed -E 's/^[[:space:]]*"//; s/"[[:space:]]*$//')"
+        [[ -n "$line" ]] && current+=("$line")
+    done <<< "$(security list-keychains -d user)"
+    [[ ${#SEARCH_LIST[@]} -eq 0 ]] && SEARCH_LIST=("${current[@]}")
+    security list-keychains -d user -s "${current[@]}" "$1"
 }
 
 # Lets codesign use every key in a keychain without asking, as in the release workflow's.
@@ -154,6 +163,8 @@ LOOKALIKE="$WORK/lookalike.keychain-db"
 new_keychain "$LOOKALIKE"
 security_import "Test Lookalike Copy" "$LOOKALIKE" -T /usr/bin/codesign
 open_to_codesign "$LOOKALIKE"
+# A throwaway machine, where codesign needs it: here, the search list is left alone.
+[[ "${GITHUB_ACTIONS:-}" == true ]] && add_to_search_list "$LOOKALIKE"
 expect "codesign itself, given a name no certificate has exactly, signs with one whose name contains it" 0 \
     signs_with "$(sha1_of "Test Lookalike Copy" "$LOOKALIKE")" \
     codesign --force --sign "Test Lookalike" --keychain "$LOOKALIKE" --timestamp=none "$WORK/probe"
@@ -166,6 +177,7 @@ helper_import "Test Signer" "$CHOOSING" --trust /usr/bin/codesign
 security_import "Test Signer Copy" "$CHOOSING" -T /usr/bin/codesign
 security_import "Copy of Test Signer" "$CHOOSING" -T /usr/bin/codesign
 open_to_codesign "$CHOOSING"
+[[ "${GITHUB_ACTIONS:-}" == true ]] && add_to_search_list "$CHOOSING"
 SIGNER="$(sha1_of "Test Signer" "$CHOOSING")"
 expect "signing_identity finds the certificate named exactly so, among look-alikes" 0 --says "$SIGNER" \
     signing_identity "Test Signer" "$CHOOSING"
@@ -195,11 +207,7 @@ if [[ "${GITHUB_ACTIONS:-}" == true || "${ADO_PULSE_TEST_IDENTITY_PREFERENCE:-}"
     open_to_codesign "$PREFERRING"
     PREFERRED="$(sha1_of "Test Preferred" "$PREFERRING")"
     # codesign finds an identity preference's certificate on the search list.
-    while IFS= read -r line; do
-        line="$(printf '%s' "$line" | sed -E 's/^[[:space:]]*"//; s/"[[:space:]]*$//')"
-        [[ -n "$line" ]] && SEARCH_LIST+=("$line")
-    done <<< "$(security list-keychains -d user)"
-    security list-keychains -d user -s "${SEARCH_LIST[@]}" "$PREFERRING"
+    add_to_search_list "$PREFERRING"
     if [[ "${GITHUB_ACTIONS:-}" == true ]]; then
         # A throwaway machine, whose login keychain may be locked: the preference goes in the throwaway keychain.
         DEFAULT_KEYCHAIN="$(security default-keychain -d user | sed -E 's/^[[:space:]]*"//; s/"[[:space:]]*$//')"
@@ -217,8 +225,6 @@ if [[ "${GITHUB_ACTIONS:-}" == true || "${ADO_PULSE_TEST_IDENTITY_PREFERENCE:-}"
         security default-keychain -d user -s "$DEFAULT_KEYCHAIN"
         DEFAULT_KEYCHAIN=""
     fi
-    security list-keychains -d user -s "${SEARCH_LIST[@]}"
-    SEARCH_LIST=()
 else
     echo "skipped: an identity preference named like the certificate (it goes in your default keychain: set"
     echo "         ADO_PULSE_TEST_IDENTITY_PREFERENCE=1 to check it here; GitHub Actions does)"

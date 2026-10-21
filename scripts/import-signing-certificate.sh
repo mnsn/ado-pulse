@@ -1,9 +1,10 @@
 #!/bin/bash
 # For the release workflow: puts the release certificate, from the release environment's
 # RELEASE_SIGNING_P12 and RELEASE_SIGNING_P12_PASSWORD secrets (see scripts/make-release-certificate.sh),
-# in a new keychain that codesign may use without asking. On GitHub Actions, the later steps get
-# ADO_PULSE_SIGNING_KEYCHAIN and ADO_PULSE_SIGNING_IDENTITY, for scripts/sign-package.sh. Delete the
-# keychain afterwards: security delete-keychain keychain
+# in a new keychain that codesign may use without asking, on the keychain search list. On GitHub Actions,
+# the later steps get ADO_PULSE_SIGNING_KEYCHAIN and ADO_PULSE_SIGNING_IDENTITY, for
+# scripts/sign-package.sh. Delete the keychain afterwards, which takes it off the search list too:
+# security delete-keychain keychain
 #   scripts/import-signing-certificate.sh keychain
 set -euo pipefail
 
@@ -19,6 +20,13 @@ KEYCHAIN_PASSWORD="$(/usr/bin/openssl rand -base64 24)"
 security create-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN"
 security set-keychain-settings -lut 21600 "$KEYCHAIN"
 security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN"
+# codesign on macOS 15 and 26 finds an identity only in a keychain on the search list, even when told which.
+SEARCH_LIST=()
+while IFS= read -r line; do
+    line="$(printf '%s' "$line" | sed -E 's/^[[:space:]]*"//; s/"[[:space:]]*$//')"
+    [[ -n "$line" ]] && SEARCH_LIST+=("$line")
+done <<< "$(security list-keychains -d user)"
+security list-keychains -d user -s ${SEARCH_LIST[@]+"${SEARCH_LIST[@]}"} "$KEYCHAIN"
 # Only codesign may use the key without asking, and nothing can export it, so the steps after this one
 # can sign with it but not take it (scripts/signing-key.swift: security import's -x has no effect on a
 # PKCS #12). The password and the certificate reach it through a pipe, not its command line.

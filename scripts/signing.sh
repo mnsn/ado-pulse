@@ -32,7 +32,8 @@ require_safe_key() {
 }
 
 # sign_with <SHA-1> <path> <keychain, or ""> [codesign options...]: signs with exactly that certificate, and
-# checks that the signature names it.
+# checks that the signature names it. On macOS 15 and 26, codesign finds it only in a keychain on the search
+# list, even with --keychain.
 sign_with() {
     local hash="$1" target="$2" keychain="$3" requirement
     shift 3
