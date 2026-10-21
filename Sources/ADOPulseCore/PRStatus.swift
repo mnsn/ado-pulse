@@ -516,10 +516,11 @@ public enum PRClassifier {
                 }
             }
         case .author:
-            // A vote that wanted changes, answered by your push.
+            // A vote that wanted changes, answered by your push. Only from a reviewer still on the pull request, as in
+            // Needs You; your push may have reset the vote itself.
             for item in details.activity where item.kind == .vote && item.at > seenCutoff {
                 guard let voter = item.actor, voter.id != me, item.vote == .waitingForAuthor || item.vote == .rejected,
-                      let push = pushes.first(where: { $0.at > item.at })
+                      pr.reviewer(voter.id) != nil, let push = pushes.first(where: { $0.at > item.at })
                 else { continue }
                 answers.append(Answer(kind: item.vote == .rejected ? .rejected : .changesRequested, from: voter.name,
                                       at: push.at, action: .push(commits: push.commitCount)))

@@ -149,6 +149,10 @@ import Testing
         #expect(snapshot.headline == "You pushed 2 commits")
         #expect(snapshot.detail == "Sam Rivera asked for changes")
 
+        // Nor one answering a reviewer who has since been removed: that never needed you.
+        let removed = makePR(reviewers: [Reviewer(person: People.priya, vote: .none)])
+        #expect(classify(removed, role: .author, details: makeDetails(for: removed, checks: checks, activity: activity))?.group == .waiting)
+
         // Someone else's push isn't your answer.
         let theirs = [vote(1, People.sam, .waitingForAuthor, at: t(-2 * hour)), push(2, People.priya, at: t(-hour))]
         #expect(classify(pr, role: .author, details: makeDetails(for: pr, checks: checks, activity: theirs))?.group == .waiting)
