@@ -156,12 +156,14 @@ or a week passes. Once you've voted or commented, it's in **Answered** until you
 Links aren't announced: the app they came in already did.
 
 macOS protects that database, so ADO Pulse needs Full Disk Access, which it asks for when you turn the
-setting on, and macOS ties that access to the app's code signature. `make signing-identity` creates
-a self-signed certificate, and builds signed with it keep the same designated requirement, so access
-survives rebuilds. An ad-hoc signature changes with every build. Its private key can't be exported,
-and no app may use it without asking, codesign included: macOS asks for your login password each time
-a build is signed. A key that codesign could use without asking would let anything running as you sign
-its own code as ADO Pulse, and get the Full Disk Access you gave it. Releases are signed the same way,
+setting on, and macOS ties that access to the app's code signature. A build from source is signed ad
+hoc, a signature that changes with every build, so access has to be allowed again after each one.
+`make signing-identity` instead creates a self-signed certificate, and builds signed with it keep the
+same designated requirement, so access survives rebuilds. Its private key can't be exported, and no
+app may use it without asking, codesign included: macOS asks for your login password each time a
+build is signed. A key that codesign could use without asking (Always Allow) would let anything running
+as you sign its own code as ADO Pulse, and get the Full Disk Access you gave it, so the script and each
+build check for that. Releases are signed the same way,
 with the project's own certificate (see "Releasing" in [CONTRIBUTING.md](../CONTRIBUTING.md)), so
 access survives updates.
 

@@ -29,7 +29,8 @@ Fixes:
 - `--demo` works with `--orgs` and `--watch`, rather than reading your own organizations.
 - Building from source: the key `make signing-identity` creates now asks before every use, and can't
   be exported, so nothing else running as you can sign code as ADO Pulse and get its Full Disk Access.
-  If you made one with an earlier version, run `scripts/make-signing-identity.sh --replace`.
+  If you made one with an earlier version, run `scripts/make-signing-identity.sh` with `--replace`, or
+  with `--delete` to sign your builds ad hoc, as they are without one.
 
 ## 0.1.0 - 2026-10-21
 

@@ -28,8 +28,8 @@ for arg in "$@"; do
 done
 if ! $AD_HOC && ! security find-certificate -c "$IDENTITY" ${KEYCHAIN:+"$KEYCHAIN"} >/dev/null 2>&1; then
     AD_HOC=true
-    echo "note: there's no \"$IDENTITY\" certificate, so the app is signed ad hoc, and Full Disk Access" >&2
-    echo "      (for pull requests sent in chats) won't survive the next build. 'make signing-identity' fixes that." >&2
+    echo "note: signed ad hoc (there's no \"$IDENTITY\" certificate): macOS ties Full Disk Access, for pull requests" >&2
+    echo "      sent in chats, to this exact build, so allow it again after the next one. See make signing-identity." >&2
 fi
 
 BUILD_FLAGS=(-c release)

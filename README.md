@@ -108,12 +108,15 @@ make install     # builds "ADO Pulse.app", copies it to ~/Applications and launc
 ```
 
 Then turn on **Launch at Login** as above. To update, pull and run `make install` again; to remove
-it, run `make uninstall`. If you'll use **Pull Requests Sent in Chats**, run `make signing-identity`
-once before `make install`, so the Full Disk Access you give it survives the next build. macOS then
-asks for your login password each time a build is signed: choose **Allow**, never Always Allow, which
-would let anything running as you sign code as ADO Pulse and get its Full Disk Access. (If you ran
-`make signing-identity` before this version, run `scripts/make-signing-identity.sh --replace` once:
-that key let codesign use it without asking.)
+it, run `make uninstall`.
+
+A build you make yourself is signed ad hoc, and macOS ties Full Disk Access to that exact build: if
+you use **Pull Requests Sent in Chats**, allow it again after each `make install`. To keep it across
+builds, `make signing-identity` creates a certificate to sign them with. macOS then asks for your
+login password each time a build is signed: choose **Allow**, never Always Allow, which would let
+anything running as you sign code as ADO Pulse and get its Full Disk Access. If you made one with an
+earlier version, which let codesign use it without asking, run `scripts/make-signing-identity.sh`
+with `--replace`, or with `--delete` to go back to ad hoc.
 
 ## Signing in
 
@@ -185,8 +188,9 @@ keeps only the latest hundred or so notifications per app, so ADO Pulse remember
 (only the links, as described in [Privacy](#privacy)).
 
 macOS ties Full Disk Access to the app's signature. Every release is signed with the same
-certificate, so updating keeps it. A copy you build yourself keeps it across builds once you've run
-`make signing-identity`; otherwise you have to allow each new build again.
+certificate, so updating keeps it. A copy you build yourself is signed ad hoc, so you allow each new
+build again, unless you sign your builds with `make signing-identity` (see
+[Build from source](#build-from-source)).
 
 ### Why isn't a pull request assigned to my team shown?
 

@@ -4,20 +4,23 @@
 # rather than the code's hashes, and macOS keeps ADO Pulse's Full Disk Access (for pull requests sent
 # in chats) across rebuilds. Ad-hoc signed builds lose it every time. Run it once per Mac; running it
 # again checks that the key works.
-#   scripts/make-signing-identity.sh [--replace | --check] [keychain]
+#   scripts/make-signing-identity.sh [--replace | --delete | --check] [keychain]
 # No app may use the key without asking, and it can't be exported: macOS asks for your login password
 # each time something signs with it, a build included. Choose Allow, never Always Allow, which would let
 # anything running as you sign code as ADO Pulse, and so get the Full Disk Access you gave it.
 # --replace deletes the certificate and its key first, such as one an earlier version of this script
 # made, which let codesign use the key without asking. Then allow Full Disk Access for the next build.
+# --delete only deletes them: builds are then signed ad hoc again.
 # --check only says, without asking for anything, whether codesign may use the key without asking.
 # ADO_PULSE_SIGNING_IDENTITY picks another name.
 set -euo pipefail
 
 REPLACE=false
+DELETE=false
 CHECK=false
 case "${1:-}" in
     --replace) REPLACE=true; shift ;;
+    --delete) DELETE=true; shift ;;
     --check) CHECK=true; shift ;;
 esac
 NAME="${ADO_PULSE_SIGNING_IDENTITY:-ADO Pulse Signing}"
@@ -73,11 +76,15 @@ if $CHECK; then
     exit 0
 fi
 
-if $REPLACE; then
+if $REPLACE || $DELETE; then
     for hash in $(certificates); do
         security delete-identity -Z "$hash" "$KEYCHAIN" >/dev/null 2>&1 || security delete-certificate -Z "$hash" "$KEYCHAIN" >/dev/null
     done
     echo "Deleted any \"$NAME\" certificate and key from $KEYCHAIN."
+    if $DELETE; then
+        echo "Builds are signed ad hoc now: allow Full Disk Access again after each one."
+        exit 0
+    fi
 fi
 
 if security find-identity -p codesigning "$KEYCHAIN" | grep -F "\"$NAME\"" >/dev/null; then
