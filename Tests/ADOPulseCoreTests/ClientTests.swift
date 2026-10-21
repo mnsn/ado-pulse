@@ -211,12 +211,19 @@ import Testing
 
     @Test(.timeLimit(.minutes(1)))
     func endsAProgramThatIgnoresBeingAskedToStop() async throws {
+        // Both sleeps ignore SIGTERM, so only SIGKILL, a second later, ends them. The program becomes one of them
+        // (exec), so it can't exit on its own when the other is killed first, as a shell waiting for it would.
         let start = Date()
         let result = try await ProcessRunner().run(
-            URL(fileURLWithPath: "/bin/sh"), arguments: ["-c", "trap '' TERM; sleep 30"], environment: nil, timeout: 0.3
+            URL(fileURLWithPath: "/bin/sh"), arguments: ["-c", "trap '' TERM; sleep 30 & echo $!; exec sleep 30"],
+            environment: nil, timeout: 0.5
         )
+        let elapsed = Date().timeIntervalSince(start)
         #expect(result.status == SIGKILL)
-        #expect(Date().timeIntervalSince(start) < 5)
+        #expect(elapsed > 1.2 && elapsed < 5)
+        // The sleep is ended too.
+        let child = try #require(pid_t(String(decoding: result.stdout, as: UTF8.self).trimmingCharacters(in: .whitespacesAndNewlines)))
+        #expect(try await ends(child))
     }
 
     @Test(.timeLimit(.minutes(1)))
@@ -230,12 +237,16 @@ import Testing
         #expect(Date().timeIntervalSince(start) < 3)
         // And what it left running is ended.
         let child = try #require(pid_t(String(decoding: result.stdout, as: UTF8.self).trimmingCharacters(in: .whitespacesAndNewlines)))
-        var ended = false
-        for _ in 0..<100 where !ended {
-            ended = kill(child, 0) != 0 && errno == ESRCH
-            if !ended { try await Task.sleep(for: .milliseconds(20)) }
+        #expect(try await ends(child))
+    }
+
+    /// Whether a process is gone within two seconds.
+    private func ends(_ pid: pid_t) async throws -> Bool {
+        for _ in 0..<100 {
+            if kill(pid, 0) != 0 && errno == ESRCH { return true }
+            try await Task.sleep(for: .milliseconds(20))
         }
-        #expect(ended)
+        return false
     }
 
     @Test func collectsLargeOutput() async throws {
