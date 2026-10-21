@@ -1,0 +1,78 @@
+name: Release
+
+# Pushing a version tag such as v0.1.0 publishes a GitHub release with the universal app. The tag must
+# match CFBundleShortVersionString in Resources/Info.plist and be higher than every earlier tag, and
+# CHANGELOG.md needs a section for that version; it becomes the release notes. See "Releasing" in
+# CONTRIBUTING.md.
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Build the release
+    runs-on: macos-26
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          fetch-depth: 0 # every tag, to check that the version is higher
+
+      - name: Show toolchain
+        run: |
+          sw_vers
+          xcode-select --print-path
+          swift --version
+
+      - name: Package the app
+        run: ./scripts/package.sh "$GITHUB_REF_NAME"
+
+      - name: Test
+        run: make test
+
+      - name: Upload the package
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: release
+          path: build/release/
+          if-no-files-found: error
+
+  # Publishes exactly what the build job packaged. Give the release environment a required reviewer
+  # (Settings › Environments) to approve each release before it's published.
+  publish:
+    name: Publish the release
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    environment: release
+    permissions:
+      contents: write # to create the release
+      id-token: write # to sign the build provenance attestation
+      attestations: write # to store it
+    steps:
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: release
+          path: build/release
+
+      - name: Check the package
+        run: cd build/release && shasum -a 256 -c ADO-Pulse.zip.sha256
+
+      - name: Attest the build provenance
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
+        with:
+          subject-path: build/release/ADO-Pulse.zip
+
+      - name: Publish the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: >-
+          gh release create "$GITHUB_REF_NAME" --verify-tag
+          --title "ADO Pulse ${GITHUB_REF_NAME#v}"
+          --notes-file build/release/notes.md
+          build/release/ADO-Pulse.zip build/release/ADO-Pulse.zip.sha256

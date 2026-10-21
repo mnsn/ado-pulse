@@ -1,10 +1,16 @@
 # Contributing to ADO Pulse
 
+Thanks for your interest! Bug reports, ideas and pull requests are all welcome.
+
 ## Getting started
 
-You need macOS 15 or later and Swift 6. Xcode works, and so do just the Command Line Tools.
+You need macOS 15 or later and Swift 6. Xcode works, and so do just the Command Line Tools. Running
+it with your own pull requests needs the Azure CLI, signed in (`az login`); the tests and the demo
+don't.
 
 ```sh
+git clone https://github.com/mnsn/ado-pulse.git
+cd ado-pulse
 make test    # run the tests
 make demo    # run the app with made-up pull requests (Ctrl-C to quit)
 make run     # run the app with your own pull requests
@@ -22,6 +28,7 @@ make build         # debug build
 make demo-check    # check that the demo pull requests land in the expected groups
 make screenshots   # render the README screenshots from the demo data
 make app           # build "ADO Pulse.app" into ./build without installing
+make package       # build the universal app for a release, check it and zip it into build/release
 make install       # build the app, copy it to ~/Applications and launch it
 make icon          # regenerate Resources/AppIcon.icns
 ```
@@ -48,7 +55,7 @@ Sources/ADOPulseCore/   the engine; UI-free, and fully tested
 Sources/ADOPulse/       the AppKit/SwiftUI app: menu bar, panel, widget, settings, notifications,
                         on-device summaries, command line and renderer
 Tests/ADOPulseCoreTests/  Swift Testing suites, including the engine against a stub Azure DevOps
-scripts/                app bundling, checking, and the icon
+scripts/                app bundling, checking and packaging, and the icon
 ```
 
 ## Debugging
@@ -101,6 +108,39 @@ log show --last 10m --info --predicate 'subsystem == "com.asaf.ADOPulse"' --styl
 ## Pull requests
 
 - Keep each pull request focused, and describe the change users will see.
-- Run `make test` and `make demo-check` first.
+- Run `make test` and `make demo-check` first. CI also runs them on macOS 15 and macOS 26, packages
+  the universal app, and runs it on macOS 15 on Apple silicon and Intel.
 - Update the README, or [How it works](docs/how-it-works.md), when behavior or settings change.
 - For UI changes, include before and after screenshots from `make screenshots`.
+
+## Releasing
+
+Releases are built by GitHub Actions, not on a maintainer's Mac.
+
+1. Set the new version as `CFBundleShortVersionString` in `Resources/Info.plist`, as three numbers
+   such as `0.2.0`. The build sets `CFBundleVersion` to the same value. A release fails unless its
+   version is higher than every earlier tag.
+2. Add a section for it at the top of `CHANGELOG.md`, such as `## 0.2.0 - 2026-11-30`. It becomes
+   the release notes, so write it for users.
+3. Push to `main` and wait for CI.
+4. Tag the commit and push the tag:
+
+   ```sh
+   git tag v0.2.0
+   git push origin v0.2.0
+   ```
+
+The tag starts the [release workflow](.github/workflows/release.yml). Its first job checks the
+version, then builds, checks and tests the universal app on macOS 26 (`scripts/package.sh`). The
+second job attests the zip's build provenance and publishes the release with `ADO-Pulse.zip`, its
+SHA-256 and the changelog section. It runs in the `release` environment: give that environment a
+required reviewer (**Settings › Environments**) to approve each release before it's published, and
+turn on private vulnerability reporting (**Settings › Security**) for [SECURITY.md](SECURITY.md).
+
+The app is signed ad hoc and isn't notarized, which is why the README explains the Gatekeeper step.
+It doesn't update itself yet: users download each release.
+
+## License
+
+ADO Pulse is licensed under the GNU General Public License, version 3 or later. By contributing, you
+agree that your contributions are licensed under the same terms.

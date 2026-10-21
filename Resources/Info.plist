@@ -18,7 +18,7 @@
 	<string>ADO Pulse</string>
 	<key>CFBundlePackageType</key>
 	<string>APPL</string>
-	<!-- The build sets CFBundleVersion to this version too. -->
+	<!-- The build sets CFBundleVersion to this version too. A release's tag must match it (v0.1.0). -->
 	<key>CFBundleShortVersionString</key>
 	<string>0.1.0</string>
 	<key>LSApplicationCategoryType</key>
@@ -30,6 +30,6 @@
 	<key>NSHighResolutionCapable</key>
 	<true/>
 	<key>NSHumanReadableCopyright</key>
-	<string>Copyright © 2026 Asaf Manassen.</string>
+	<string>Copyright © 2026 Asaf Manassen. Licensed under GPL-3.0-or-later.</string>
 </dict>
 </plist>

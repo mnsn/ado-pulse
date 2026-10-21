@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Report a security vulnerability
+    url: https://github.com/mnsn/ado-pulse/security/advisories/new
+    about: Please report security issues privately, not in a public issue.
+  - name: Problems with Azure DevOps or the Azure CLI themselves
+    url: https://developercommunity.visualstudio.com/AzureDevOps
+    about: ADO Pulse is an independent project. For Azure DevOps itself, use Microsoft's Developer Community.

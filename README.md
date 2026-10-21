@@ -1,5 +1,8 @@
 # ADO Pulse
 
+[![CI](https://github.com/mnsn/ado-pulse/actions/workflows/ci.yml/badge.svg)](https://github.com/mnsn/ado-pulse/actions/workflows/ci.yml)
+[![License: GPL v3](https://img.shields.io/badge/license-GPLv3-blue.svg)](LICENSE)
+
 A small macOS menu-bar app, with an optional desktop widget, that shows your Azure DevOps pull
 requests at a glance: which **need you** (a reply, a mention, a review request), which are
 **failing**, which are **ready to complete**, and which are waiting on someone else.
@@ -60,22 +63,42 @@ as new. Comments from build services and bots don't count.
 
 ## Install
 
-Requires macOS 15 or later, and the [Azure CLI](https://learn.microsoft.com/cli/azure/install-azure-cli-macos)
-signed in to your work account. Summaries need Apple Intelligence (macOS 26 or later); everything
-else works without it.
+Requires macOS 15 or later, on Apple silicon or Intel, and the
+[Azure CLI](https://learn.microsoft.com/cli/azure/install-azure-cli-macos) signed in to your work
+account. Summaries need Apple Intelligence (macOS 26 or later); everything else works without it.
+
+1. Install the Azure CLI and sign in, if you haven't: `brew install azure-cli`, then `az login`.
+   ADO Pulse can also start the sign-in for you.
+2. Download [**ADO-Pulse.zip**](https://github.com/mnsn/ado-pulse/releases/latest/download/ADO-Pulse.zip)
+   from the [latest release](https://github.com/mnsn/ado-pulse/releases/latest) and unzip it.
+3. Drag **ADO Pulse** to your Applications folder before you open it. Opened from Downloads, macOS
+   runs it from a temporary location, and Launch at Login may not work.
+4. Open it. The app isn't notarized by Apple, so the first time, macOS won't open it because it
+   can't verify it. Click **Done**, then go to **System Settings › Privacy & Security**, scroll down
+   to the message that ADO Pulse was blocked, click **Open Anyway** and confirm.
+5. Turn on **Launch at Login** in its settings. If macOS asks you to allow it, use
+   **Allow in Login Items Settings…**. Allow its notifications too, when it asks.
+
+The first time, it looks for your organizations, which takes a few seconds. To update, download the
+latest release and replace the app; watch the repository's releases to hear about new ones. To
+remove it, quit it and move it to the Trash.
+
+On a Mac that your organization manages, **Open Anyway** may be missing. You can build ADO Pulse
+from source instead.
+
+### Build from source
+
+You need Swift 6 from Xcode or the Command Line Tools (`xcode-select --install`). An app you build
+yourself opens without the Gatekeeper step.
 
 ```sh
-brew install azure-cli    # if you don't have it
-az login                  # once; ADO Pulse can also start this for you
-
-git clone <this repository>
+git clone https://github.com/mnsn/ado-pulse.git
 cd ado-pulse
-make install              # builds "ADO Pulse.app", copies it to ~/Applications and launches it
+make install     # builds "ADO Pulse.app", copies it to ~/Applications and launches it
 ```
 
-Building needs Swift 6, from Xcode or the Command Line Tools (`xcode-select --install`). Then turn
-on **Launch at Login** in its settings. If macOS asks you to allow it, use **Allow in Login Items
-Settings…**. To remove it, run `make uninstall`.
+Then turn on **Launch at Login** as above. To update, pull and run `make install` again; to remove
+it, run `make uninstall`.
 
 ## Signing in
 
@@ -137,6 +160,14 @@ requests where you were added yourself, including by a policy, are shown.
 Azure DevOps doesn't include a build's errors with a pull request's policies, so the panel shows
 which build failed. Click the pull request to see it.
 
+### Why isn't it notarized?
+
+Notarization needs a paid Apple Developer Program membership, which this free project doesn't
+have. So macOS asks you to allow the app the first time you open it, as described in
+[Install](#install). Each release is built from its tagged source by
+[GitHub Actions](.github/workflows/release.yml), with an attestation you can
+[verify](SECURITY.md#verifying-a-download). You can also build it yourself.
+
 ### How do I troubleshoot it?
 
 The app binary has command-line modes, and logs diagnostics to the system log:
@@ -154,7 +185,14 @@ you share it.
 
 ## Contributing
 
-[CONTRIBUTING.md](CONTRIBUTING.md) explains how to build, test and try the app with made-up pull
-requests.
+Bug reports, ideas and pull requests are welcome. [CONTRIBUTING.md](CONTRIBUTING.md) explains how
+to build, test and try the app with made-up pull requests. Please report security issues privately
+as described in [SECURITY.md](SECURITY.md).
 
-Copyright © 2026 Asaf Manassen.
+## License
+
+Copyright © 2026 Asaf Manassen. ADO Pulse is free software, licensed under the
+[GNU General Public License v3.0 or later](LICENSE).
+
+Microsoft, Azure and Azure DevOps are trademarks of the Microsoft group of companies. Apple
+Intelligence is a trademark of Apple Inc.

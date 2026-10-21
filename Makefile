@@ -1,4 +1,4 @@
-.PHONY: build test app install uninstall run demo dump watch render icon demo-check screenshots clean
+.PHONY: build test app package install uninstall run demo dump watch render icon demo-check screenshots clean
 
 # With only the Command Line Tools installed, the compiler sometimes misses Swift Testing's macro
 # plugin (it lives in a subfolder), so point it there explicitly.
@@ -16,6 +16,10 @@ test:
 
 app:
 	./scripts/build-app.sh
+
+# The release zip: a universal app, checked and zipped, with its SHA-256 and notes in build/release.
+package:
+	./scripts/package.sh
 
 install:
 	./scripts/build-app.sh --install
