@@ -13,7 +13,10 @@ cd "$(dirname "$0")/.."
 source scripts/signing.sh
 
 OPENSSL=/usr/bin/openssl
-WORK="$(mktemp -d)"
+# The keychains are made the way the release workflow makes its own: in RUNNER_TEMP on GitHub Actions, by a path
+# without symbolic links, and with the same settings. On GitHub's macOS 15 and 26, codesign --keychain didn't find
+# the identities in ones under /var/folders (through the /var link) without those settings.
+WORK="$(cd "$(mktemp -d "${RUNNER_TEMP:-${TMPDIR:-/tmp}}/signing-key-test.XXXXXX")" && pwd -P)"
 KEYCHAINS=()
 SEARCH_LIST=()
 PREFERENCE=""
@@ -33,7 +36,7 @@ FAILURES=0
 new_keychain() {
     security create-keychain -p "$KEYCHAIN_PASSWORD" "$1"
     KEYCHAINS+=("$1")
-    security set-keychain-settings "$1"
+    security set-keychain-settings -lut 21600 "$1"
     security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$1"
 }
 
