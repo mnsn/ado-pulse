@@ -54,6 +54,8 @@ demo-check: $(if $(filter command line,$(origin PULSE)),,build)
 		echo "demo-check failed: --demo --orgs doesn't list only the made-up organization" >&2; exit 1; fi; \
 	if ! "$(PULSE)" --demo --watch | grep -q 'needsYou  Priya Shah commented: !4091'; then \
 		echo "demo-check failed: --demo --watch doesn't show the made-up change" >&2; exit 1; fi; \
+	if ! "$(PULSE)" --demo --chats | grep -q 'Dana Whitfield .*contoso/4113'; then \
+		echo "demo-check failed: --demo --chats doesn't show the made-up links" >&2; exit 1; fi; \
 	echo "demo-check passed: $$counts"
 
 # Renders the README screenshots from the demo data.

@@ -58,7 +58,7 @@ enum CLI {
             return options.demo ? listDemoOrganizations() : listOrganizations()
         }
         if arguments.contains("--chats") {
-            return listChatLinks()
+            return options.demo ? listDemoChatLinks() : listChatLinks()
         }
         if arguments.contains("--watch") {
             if options.demo { return watchDemo() }
@@ -244,12 +244,24 @@ enum CLI {
         let links = ChatLinkScanner.scan(records)
         let apps = Set(records.map(\.bundleIdentifier)).count
         print("\(records.count) notifications from \(apps) apps; \(links.count) links to pull requests")
+        printChatLinks(links)
+        return 0
+    }
+
+    /// The made-up links in the demo, without reading Notification Center.
+    private static func listDemoChatLinks() -> Int32 {
+        let links = DemoData.records(now: Date()).flatMap(\.chatLinks)
+        print("Made-up notifications; \(links.count) links to pull requests")
+        printChatLinks(links)
+        return 0
+    }
+
+    private static func printChatLinks(_ links: [ChatLink]) {
         let now = Date()
         for link in links.sorted(by: { $0.sentAt > $1.sentAt }) {
             print([pad(Elapsed.short(since: link.sentAt, now: now), 7), pad(link.appName, 10), pad(link.sender ?? "", 28),
                    "\(link.key)  \(link.messageURL == nil ? "" : "(message link)")"].joined(separator: " "))
         }
-        return 0
     }
 
     private static func listDemoOrganizations() -> Int32 {
