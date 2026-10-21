@@ -425,9 +425,10 @@ final class PRStore: ObservableObject {
 
     func receive(_ snapshot: PulseSnapshot) {
         // Someone else signed in to the Azure CLI: what they've seen is their own, and the list to compare the next
-        // one with, to announce what's new, was the other account's.
+        // one with, to announce what's new, was the other account's, as was what the panel showed in Answered.
         if mode == .live, let account = snapshot.account, settings.useAccount(account) {
             announced = nil
+            answeredInPanel = [:]
             Log.app.info("Signed in to the Azure CLI as another account")
         }
         state = snapshot
