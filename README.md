@@ -102,7 +102,8 @@ make install     # builds "ADO Pulse.app", copies it to ~/Applications and launc
 
 Then turn on **Launch at Login** as above. To update, pull and run `make install` again; to remove
 it, run `make uninstall`. If you'll use **Pull Requests Sent in Chats**, run `make signing-identity`
-once before `make install`, so the Full Disk Access you give it survives the next build.
+once before `make install`, so the Full Disk Access you give it survives the next build. When macOS
+asks whether codesign may use the new key, enter your login password and choose **Always Allow**.
 
 ## Signing in
 

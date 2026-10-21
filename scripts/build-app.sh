@@ -64,7 +64,11 @@ else
     if [[ -n "$KEYCHAIN" ]]; then
         KEYCHAIN_ARGS=(--keychain "$KEYCHAIN")
     fi
-    codesign --force --options runtime --timestamp=none --sign "$IDENTITY" ${KEYCHAIN_ARGS[@]+"${KEYCHAIN_ARGS[@]}"} "$APP"
+    if ! codesign --force --options runtime --timestamp=none --sign "$IDENTITY" ${KEYCHAIN_ARGS[@]+"${KEYCHAIN_ARGS[@]}"} "$APP"; then
+        echo "error: codesign can't use the \"$IDENTITY\" key. Run 'make signing-identity' and choose" >&2
+        echo "       Always Allow when macOS asks, or build with --ad-hoc." >&2
+        exit 1
+    fi
 fi
 REQUIREMENT="$(codesign -d -r- "$APP" 2>&1 | sed -n 's/^#* *designated => //p')"
 echo "Built $APP (version $VERSION, $(lipo -archs "$APP/Contents/MacOS/$EXECUTABLE"))"
