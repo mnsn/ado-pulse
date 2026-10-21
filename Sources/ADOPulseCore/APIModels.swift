@@ -63,6 +63,7 @@ public struct ADOList<Element: Decodable & Sendable>: Decodable, Sendable {
 public struct ADOConnectionData: Decodable, Sendable {
     public struct User: Decodable, Sendable {
         public var id: String
+        public var providerDisplayName: String?
     }
 
     public var authenticatedUser: User

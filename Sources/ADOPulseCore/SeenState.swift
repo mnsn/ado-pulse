@@ -48,7 +48,7 @@ public enum RefreshPlanner {
         public var activeInterval: TimeInterval
         /// For drafts and pull requests without recent activity.
         public var quietInterval: TimeInterval
-        /// At most this many pull requests per refresh, after the first.
+        /// At most this many known pull requests are refreshed per refresh; new ones always are.
         public var budget: Int
 
         public init(busyInterval: TimeInterval = 60, activeInterval: TimeInterval = 180, quietInterval: TimeInterval = 900, budget: Int = 8) {
@@ -83,8 +83,8 @@ public enum RefreshPlanner {
         }
     }
 
-    /// New and changed pull requests first, then the ones whose details are oldest past their interval.
-    /// Without a budget (the first load) every pull request without details is included.
+    /// Pull requests without details always, then, up to `limit` (nil for no limit), changed ones and the
+    /// ones whose details are oldest past their interval.
     public static func plan(_ candidates: [Candidate], cache: [PRKey: Entry], now: Date, options: Options, limit: Int?) -> [PRKey] {
         var ranked: [(priority: Int, fetchedAt: Date, key: PRKey)] = []
         for candidate in candidates {
@@ -104,8 +104,8 @@ public enum RefreshPlanner {
             }
         }
         ranked.sort { ($0.priority, $0.fetchedAt, $0.key) < ($1.priority, $1.fetchedAt, $1.key) }
-        let keys = ranked.map(\.key)
-        guard let limit else { return keys }
-        return Array(keys.prefix(limit))
+        let missing = ranked.filter { $0.priority == 0 }.map(\.key)
+        let due = ranked.filter { $0.priority > 0 }.map(\.key)
+        return missing + (limit.map { Array(due.prefix($0)) } ?? due)
     }
 }

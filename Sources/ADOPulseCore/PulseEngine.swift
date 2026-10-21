@@ -36,7 +36,7 @@ public enum PulseProblem: Sendable, Equatable {
         }
     }
 
-    static func from(_ error: ADOError, organization: String? = nil) -> PulseProblem {
+    public static func from(_ error: ADOError, organization: String? = nil) -> PulseProblem {
         switch error {
         case .auth(.cliNotFound): return .cliNotFound
         case .auth(.signedOut(let message)): return .signedOut(message)
@@ -55,17 +55,23 @@ public enum PulseProblem: Sendable, Equatable {
 public struct PulseSnapshot: Sendable, Equatable {
     public var records: [PRRecord]
     public var organizations: [String]
+    /// Your name, as Azure DevOps knows it.
+    public var userName: String?
+    /// When each organization's lists were first read: what happened there before is in the panel, not news.
+    public var firstLoaded: [String: Date]
     public var problem: PulseProblem?
     public var refreshedAt: Date?
     public var isRefreshing: Bool
     public var hasLoaded: Bool
 
     public init(
-        records: [PRRecord] = [], organizations: [String] = [], problem: PulseProblem? = nil, refreshedAt: Date? = nil,
-        isRefreshing: Bool = false, hasLoaded: Bool = false
+        records: [PRRecord] = [], organizations: [String] = [], userName: String? = nil, firstLoaded: [String: Date] = [:],
+        problem: PulseProblem? = nil, refreshedAt: Date? = nil, isRefreshing: Bool = false, hasLoaded: Bool = false
     ) {
         self.records = records
         self.organizations = organizations
+        self.userName = userName
+        self.firstLoaded = firstLoaded
         self.problem = problem
         self.refreshedAt = refreshedAt
         self.isRefreshing = isRefreshing
@@ -112,6 +118,7 @@ public actor PulseEngine {
 
     private struct OrganizationLists: Sendable {
         var me: String
+        var name: String?
         var mine: [PullRequest]
         var reviewing: [PullRequest]
         var completed: [PullRequest]
@@ -126,6 +133,8 @@ public actor PulseEngine {
 
     /// Organization → your identity ID there.
     private var identities: [String: String] = [:]
+    private var userName: String?
+    private var firstLoaded: [String: Date] = [:]
     private var active: [PRKey: Listed] = [:]
     private var done: [PRKey: PullRequest] = [:]
     private var details: [PRKey: PRDetails] = [:]
@@ -133,7 +142,6 @@ public actor PulseEngine {
     private var problem: PulseProblem?
     private var refreshedAt: Date?
     private var hasLoaded = false
-    private var hasListed = false
     private var isRefreshing = false
     /// Refreshes in a row that read nothing, for backing off.
     private var failures = 0
@@ -181,7 +189,7 @@ public actor PulseEngine {
             let kept = Set(configuration.organizations)
             active = active.filter { kept.contains($0.key.organization) }
             done = done.filter { kept.contains($0.key.organization) }
-            hasListed = false
+            firstLoaded = firstLoaded.filter { kept.contains($0.key) }
             publish()
         }
         waker.wake()
@@ -248,6 +256,8 @@ public actor PulseEngine {
             switch results[organization] {
             case .success(let lists):
                 identities[organization] = lists.me
+                if let name = lists.name { userName = name }
+                if firstLoaded[organization] == nil { firstLoaded[organization] = startedAt }
                 for pr in lists.mine where pr.status == .active {
                     listed[pr.key] = Listed(pullRequest: pr, role: .author)
                 }
@@ -293,20 +303,23 @@ public actor PulseEngine {
         for (key, pr) in done where completed[key] == nil && listed[key] == nil {
             completed[key] = pr
         }
+        // The organizations may have changed while the lists loaded: keep only the ones still watched.
+        let watched = Set(self.configuration.organizations)
+        listed = listed.filter { watched.contains($0.key.organization) }
+        completed = completed.filter { watched.contains($0.key.organization) }
+        firstLoaded = firstLoaded.filter { watched.contains($0.key) }
         active = listed
         done = completed.filter { listed[$0.key] == nil && ($0.value.closedAt ?? .distantPast) > closedSince }
         details = details.filter { listed[$0.key] != nil }
         entries = entries.filter { listed[$0.key] != nil }
 
-        // Every pull request's details on the first load, then a budget per refresh.
+        // Details for every pull request without them (all of them on the first load), and a budget of others.
         let candidates = listed.values.map {
             RefreshPlanner.Candidate(key: $0.pullRequest.key, fingerprint: $0.pullRequest.fingerprint)
         }
         let keys = RefreshPlanner.plan(
-            candidates, cache: entries, now: startedAt, options: configuration.planner,
-            limit: hasListed ? configuration.planner.budget : nil
+            candidates, cache: entries, now: startedAt, options: configuration.planner, limit: configuration.planner.budget
         )
-        hasListed = true
         let throttled = await fetchDetails(keys.compactMap { listed[$0]?.pullRequest }, configuration: configuration)
 
         refreshedAt = now()
@@ -370,11 +383,14 @@ public actor PulseEngine {
     ) async -> Result<OrganizationLists, ADOError> {
         do {
             let me: String
+            var name: String?
             if let known {
                 me = known
             } else {
-                me = try await client.get(ADOEndpoint.connectionData(organization: organization), as: ADOConnectionData.self)
-                    .authenticatedUser.id.lowercased()
+                let user = try await client.get(ADOEndpoint.connectionData(organization: organization), as: ADOConnectionData.self)
+                    .authenticatedUser
+                me = user.id.lowercased()
+                name = user.providerDisplayName
             }
             typealias List = ADOList<ADOPullRequest>
             async let mine = client.get(ADOEndpoint.pullRequests(organization: organization, creatorId: me, status: "active"), as: List.self)
@@ -385,7 +401,7 @@ public actor PulseEngine {
             ), as: List.self)
             let (m, r, c) = try await (mine, reviewing, completed)
             func convert(_ list: List) -> [PullRequest] { list.value.map { PullRequest(organization: organization, $0) } }
-            return .success(OrganizationLists(me: me, mine: convert(m), reviewing: convert(r), completed: convert(c)))
+            return .success(OrganizationLists(me: me, name: name, mine: convert(m), reviewing: convert(r), completed: convert(c)))
         } catch let error as ADOError {
             return .failure(error)
         } catch {
@@ -454,8 +470,8 @@ public actor PulseEngine {
         }
         records.sort { $0.id < $1.id }
         return PulseSnapshot(
-            records: records, organizations: configuration.organizations, problem: problem, refreshedAt: refreshedAt,
-            isRefreshing: isRefreshing, hasLoaded: hasLoaded
+            records: records, organizations: configuration.organizations, userName: userName, firstLoaded: firstLoaded,
+            problem: problem, refreshedAt: refreshedAt, isRefreshing: isRefreshing, hasLoaded: hasLoaded
         )
     }
 

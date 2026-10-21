@@ -1,7 +1,7 @@
 import Foundation
 
-/// The few things at the top of the panel, each as one sentence. The on-device model words the ones with
-/// a comment to condense, one at a time; the rest are plain sentences.
+/// The few things at the top of the panel, each as one sentence. The on-device model words the ones with a
+/// comment to condense, one item at a time; the rest are plain sentences.
 public struct BriefItem: Sendable, Equatable, Identifiable {
     public var id: String
     public var key: PRKey
@@ -15,34 +15,31 @@ public struct BriefItem: Sendable, Equatable, Identifiable {
 }
 
 public enum Brief {
-    /// The on-device model's instructions for brief items.
+    /// The on-device model's instructions.
     public static let instructions = """
-        You write one-sentence updates about pull requests for a developer's menu-bar panel. \
-        Use plain, friendly English, in at most 22 words. Keep people's names and the pull request title exactly as \
-        given. Say what the comment asks for or tells, in your own words. No preamble, no markdown, no emoji. Never \
-        add details that aren't in the comment.
+        You turn a code review comment into a one-sentence update for the developer reading it, in the form \
+        "<commenter> asks you to ... on <pull request title>" or "<commenter> says ... on <pull request title>". \
+        Use the commenter's name exactly as given, put the title in quotes, and say what the comment asks or tells \
+        in your own words. Plain English, at most 25 words. No preamble, markdown or emoji. Never add details.
         """
 
-    /// The on-device model's instructions for condensing a long comment in a row.
-    public static let gistInstructions = """
-        You condense code review comments into a short phrase of at most 12 words that says what the comment \
-        asks for or tells. No preamble, no quotes, no markdown, no emoji. Never add details that aren't in the comment.
-        """
-
-    /// Comments shorter than this are shown as they are.
-    public static let gistThreshold = 110
-
-    /// What needs you, then what's failing, then what's ready, newest first.
-    public static func items(from snapshots: [PRSnapshot], limit: Int = 3) -> [BriefItem] {
-        let picked = PROrdering.sorted(snapshots.filter { [.needsYou, .failing, .ready].contains($0.group) }).prefix(limit)
-        return picked.map(item)
+    /// A summary rather than a repeat of the list: the newest of what needs you, what's failing and what's ready,
+    /// then more of what needs you.
+    public static func items(from snapshots: [PRSnapshot], reader: String? = nil, limit: Int = 3) -> [BriefItem] {
+        let groups: [PRGroup] = [.needsYou, .failing, .ready]
+        let ordered = PROrdering.sorted(snapshots.filter { groups.contains($0.group) })
+        var picked = groups.compactMap { group in ordered.first { $0.group == group } }
+        for snapshot in ordered where picked.count < limit && !picked.contains(where: { $0.key == snapshot.key }) {
+            picked.append(snapshot)
+        }
+        return PROrdering.sorted(Array(picked.prefix(limit))).map { item($0, reader: reader) }
     }
 
-    static func item(_ snapshot: PRSnapshot) -> BriefItem {
+    static func item(_ snapshot: PRSnapshot, reader: String?) -> BriefItem {
         let title = "“\(snapshot.title)”"
         let top = snapshot.pendingEvents.first { kindMatches($0.kind, snapshot.reason) } ?? snapshot.pendingEvents.first
         let actor = top?.actor ?? "Someone"
-        var sentence: String
+        let sentence: String
         var prompt: String?
         switch snapshot.reason {
         case .mentioned, .replied, .commented:
@@ -55,7 +52,7 @@ public enum Brief {
                 prompt = """
                     Pull request: \(title)
                     From: \(actor), who \(relation)
-                    Comment: \(String(text.prefix(1_200)))
+                    Comment: \(String(addressingReader(text, reader: reader).prefix(1_200)))
 
                     Write the update.
                     """
@@ -78,10 +75,11 @@ public enum Brief {
         )
     }
 
-    /// The prompt that condenses a long comment for its row, or nil when it's short enough already.
-    public static func gistPrompt(for text: String) -> String? {
-        guard text.count >= gistThreshold else { return nil }
-        return "Comment: \(String(text.prefix(1_500)))\n\nWrite the short phrase."
+    /// "@Robin Diaz could you…" becomes "you, could you…", so the model writes to you rather than about you.
+    static func addressingReader(_ text: String, reader: String?) -> String {
+        guard let reader, !reader.isEmpty else { return text }
+        return text.replacingOccurrences(of: "@\(reader)", with: "you,")
+            .replacingOccurrences(of: "you,,", with: "you,")
     }
 
     private static func kindMatches(_ kind: PREvent.Kind, _ reason: PRReason) -> Bool {

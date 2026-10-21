@@ -44,9 +44,43 @@ public enum OrganizationDiscovery {
         return false
     }
 
+    /// The union of two lists of organization names, which Azure DevOps compares ignoring case, keeping the
+    /// spelling from `preferred`, sorted.
+    public static func merged(_ names: [String], preferring preferred: [String]) -> [String] {
+        var merged: [String] = []
+        for name in preferred + names where !merged.contains(where: { $0.caseInsensitiveCompare(name) == .orderedSame }) {
+            merged.append(name)
+        }
+        return merged.sorted { $0.localizedCaseInsensitiveCompare($1) == .orderedAscending }
+    }
+
     /// Organization names are letters, digits and hyphens.
     public static func isValidName(_ name: String) -> Bool {
         !name.isEmpty && name.count <= 50 && name.allSatisfy { $0.isASCII && ($0.isLetter || $0.isNumber || $0 == "-") }
             && name.first != "-"
+    }
+
+    /// The organization in what you typed or pasted: `contoso`, `dev.azure.com/contoso/...`,
+    /// `https://contoso.visualstudio.com/...`. Nil if there's none.
+    public static func name(from input: String) -> String? {
+        var text = input.trimmingCharacters(in: .whitespacesAndNewlines)
+        for scheme in ["https://", "http://"] where text.lowercased().hasPrefix(scheme) {
+            text = String(text.dropFirst(scheme.count))
+        }
+        let parts = text.split(separator: "/", omittingEmptySubsequences: true).map(String.init)
+        guard let first = parts.first else { return nil }
+        let host = first.lowercased()
+        let candidate: String?
+        if host == "dev.azure.com" {
+            candidate = parts.count > 1 ? parts[1] : nil
+        } else if host.hasSuffix(".visualstudio.com") {
+            candidate = String(first.dropLast(".visualstudio.com".count))
+        } else if parts.count == 1 {
+            candidate = first
+        } else {
+            candidate = nil
+        }
+        guard let candidate, isValidName(candidate) else { return nil }
+        return candidate
     }
 }

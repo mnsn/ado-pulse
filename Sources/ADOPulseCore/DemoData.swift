@@ -30,9 +30,26 @@ public enum DemoData {
 
     public static func snapshot(now: Date = Date()) -> PulseSnapshot {
         PulseSnapshot(
-            records: records(now: now), organizations: [organization], problem: nil,
+            records: records(now: now), organizations: [organization], userName: me.name,
+            firstLoaded: [organization: now.addingTimeInterval(-20)], problem: nil,
             refreshedAt: now.addingTimeInterval(-20), isRefreshing: false, hasLoaded: true
         )
+    }
+
+    /// The demo a little later: Priya asks for a test on the pull request that was ready, which needs you
+    /// again. The app shows it a few seconds after starting, to show a notification.
+    public static func update(_ snapshot: PulseSnapshot, at date: Date) -> PulseSnapshot {
+        var updated = snapshot
+        guard let index = updated.records.firstIndex(where: { $0.id.number == 4091 }),
+              var details = updated.records[index].details
+        else { return snapshot }
+        details.threads.append(ReviewThread(id: 63, filePath: "/src/Coupons/Rounding.cs", line: 42, comments: [
+            ReviewComment(id: 1, author: priya, text: "Could you add a test for a negative total before you merge?", publishedAt: date),
+        ]))
+        details.lastActivity = date
+        updated.records[index].details = details
+        updated.refreshedAt = date
+        return updated
     }
 
     public static func records(now: Date) -> [PRRecord] {

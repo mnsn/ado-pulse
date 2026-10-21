@@ -9,14 +9,17 @@ public struct PulseNotification: Sendable, Equatable, Identifiable {
     public var body: String
     /// What clicking it opens; nil shows the panel.
     public var url: URL?
+    /// The pull request it's about, which clicking it marks as seen.
+    public var key: PRKey?
     public var at: Date
 
-    public init(id: String, title: String, subtitle: String? = nil, body: String, url: URL?, at: Date) {
+    public init(id: String, title: String, subtitle: String? = nil, body: String, url: URL?, key: PRKey? = nil, at: Date) {
         self.id = id
         self.title = title
         self.subtitle = subtitle
         self.body = body
         self.url = url
+        self.key = key
         self.at = at
     }
 }
@@ -26,9 +29,19 @@ public struct PulseNotification: Sendable, Equatable, Identifiable {
 public enum NotificationPlanner {
     /// `notBefore`: events from before then (usually when ADO Pulse started) are in the panel, not announced.
     public static func plan(previous: [PRSnapshot], current: [PRSnapshot], notBefore: Date, limit: Int = 4) -> [PulseNotification] {
+        plan(previous: previous, current: current, notBefore: { _ in notBefore }, limit: limit)
+    }
+
+    /// With a time per pull request, such as when its organization was first read.
+    public static func plan(
+        previous: [PRSnapshot], current: [PRSnapshot], notBefore: (PRSnapshot) -> Date, limit: Int = 4
+    ) -> [PulseNotification] {
         let before = Dictionary(previous.map { ($0.key, $0) }, uniquingKeysWith: { first, _ in first })
         var notes: [PulseNotification] = []
+        var earliest = Date.distantFuture
         for snapshot in current {
+            let notBefore = notBefore(snapshot)
+            earliest = min(earliest, notBefore)
             let old = before[snapshot.key]
             let known = Set(old?.events.map(\.id) ?? [])
             let changedGroup = old.map { $0.hasDetails && $0.group != snapshot.group } ?? false
@@ -42,22 +55,25 @@ public enum NotificationPlanner {
 
             guard changedGroup, snapshot.role == .author, snapshot.hasDetails || snapshot.group == .done else { continue }
             let at = max(snapshot.since ?? notBefore, notBefore)
+            // When it happened is part of the ID: a build that fails again, or a pull request that's ready again
+            // after a push, is news again; a pull request moving back from Needs You in the same state isn't.
+            let occurrence = snapshot.since.map { String(Int($0.timeIntervalSince1970)) } ?? ""
             switch snapshot.group {
             case .failing where snapshot.reason != .buildExpired:
                 notes.append(PulseNotification(
-                    id: "\(snapshot.id):failing:\(snapshot.reason.rawValue):\(snapshot.detail ?? "")",
+                    id: "\(snapshot.id):failing:\(snapshot.reason.rawValue):\(occurrence)",
                     title: snapshot.headline, subtitle: snapshot.title, body: snapshot.detail ?? snapshot.repository,
-                    url: snapshot.url, at: at
+                    url: snapshot.url, key: snapshot.key, at: at
                 ))
             case .ready:
                 notes.append(PulseNotification(
-                    id: "\(snapshot.id):ready", title: snapshot.headline, subtitle: snapshot.title,
-                    body: snapshot.detail ?? "Every required check passes.", url: snapshot.url, at: at
+                    id: "\(snapshot.id):ready:\(occurrence)", title: snapshot.headline, subtitle: snapshot.title,
+                    body: snapshot.detail ?? "Every required check passes.", url: snapshot.url, key: snapshot.key, at: at
                 ))
             case .done where snapshot.reason == .completed:
                 notes.append(PulseNotification(
                     id: "\(snapshot.id):completed", title: "Completed", subtitle: snapshot.title,
-                    body: snapshot.detail ?? snapshot.repository, url: snapshot.url, at: at
+                    body: snapshot.detail ?? snapshot.repository, url: snapshot.url, key: snapshot.key, at: at
                 ))
             default:
                 break
@@ -70,7 +86,7 @@ public enum NotificationPlanner {
         let rest = notes.count - shown.count
         return shown + [PulseNotification(
             id: "more:" + notes.dropFirst(shown.count).map(\.id).joined(separator: ","),
-            title: "ADO Pulse", body: "\(rest) more pull request updates", url: nil, at: shown.last?.at ?? notBefore
+            title: "ADO Pulse", body: "\(rest) more pull request updates", url: nil, at: shown.last?.at ?? earliest
         )]
     }
 
@@ -100,9 +116,7 @@ public enum NotificationPlanner {
         }
         return PulseNotification(
             id: "\(snapshot.id):\(event.id)", title: title, subtitle: snapshot.title,
-            body: body ?? snapshot.repository,
-            url: event.threadId.map { _ in snapshot.url } ?? snapshot.url,
-            at: event.at
+            body: body ?? snapshot.repository, url: snapshot.url, key: snapshot.key, at: event.at
         )
     }
 }

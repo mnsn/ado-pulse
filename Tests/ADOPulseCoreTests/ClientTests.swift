@@ -324,6 +324,21 @@ extension Locked where Value == Int {
         #expect(!OrganizationDiscovery.isValidName("contoso/web"))
     }
 
+    @Test func mergesOrganizationNamesIgnoringCase() {
+        #expect(OrganizationDiscovery.merged(["contoso", "zeta"], preferring: ["Contoso", "Fabrikam"]) == ["Contoso", "Fabrikam", "zeta"])
+        #expect(OrganizationDiscovery.merged(["b", "A", "a"], preferring: []) == ["b", "A"].sorted { $0.localizedCaseInsensitiveCompare($1) == .orderedAscending })
+    }
+
+    @Test(arguments: [
+        ("contoso", "contoso"), ("  contoso \n", "contoso"), ("https://dev.azure.com/contoso", "contoso"),
+        ("dev.azure.com/contoso/Shop/_git/web/pullrequest/7", "contoso"), ("https://contoso.visualstudio.com/Shop/_git/web", "contoso"),
+        ("contoso.visualstudio.com", "contoso"), ("https://dev.azure.com", nil), ("", nil), ("not an org", nil),
+        ("https://github.com/contoso/web", nil),
+    ] as [(String, String?)])
+    func readsOrganizationNamesFromLinks(_ input: String, _ expected: String?) {
+        #expect(OrganizationDiscovery.name(from: input) == expected)
+    }
+
     @Test func discoversOrganizationsWithPullRequests() async throws {
         let server = StubServer()
         server.on("/_apis/profile/profiles/me", json: ["id": "profile-id", "publicAlias": "alias"])

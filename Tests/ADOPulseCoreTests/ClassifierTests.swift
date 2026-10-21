@@ -451,5 +451,15 @@ import Testing
         }
         // The build service's comment on the failing pull request doesn't need you.
         #expect(snapshots.first { $0.key.number == 4088 }?.group == .failing)
+
+        // A minute later, a new comment: announced once, and the pull request needs you.
+        let later = now.addingTimeInterval(60)
+        let updated = DemoData.update(DemoData.snapshot(now: now), at: later).records.compactMap {
+            PRClassifier.snapshot(for: $0, seenCutoff: seen.cutoff(for: $0.id), now: later)
+        }
+        #expect(updated.first { $0.key.number == 4091 }?.group == .needsYou)
+        let notes = NotificationPlanner.plan(previous: snapshots, current: updated, notBefore: now)
+        #expect(notes.map(\.title) == ["Priya Shah commented"])
+        #expect(notes.first?.subtitle == "Fix the coupon rounding error")
     }
 }

@@ -22,8 +22,11 @@ import Testing
         let candidates = (1...8).map { candidate($0) }
         let all = RefreshPlanner.plan(candidates, cache: cache, now: t(0), options: options, limit: nil)
         #expect(all.map(\.number) == [1, 2, 3, 8, 4, 5])
-        let budgeted = RefreshPlanner.plan(candidates, cache: cache, now: t(0), options: options, limit: 3)
+        // The budget is for refreshing known pull requests: new ones are always fetched.
+        let budgeted = RefreshPlanner.plan(candidates, cache: cache, now: t(0), options: options, limit: 2)
         #expect(budgeted.map(\.number) == [1, 2, 3])
+        let more = (9...12).map { candidate($0) }
+        #expect(RefreshPlanner.plan(candidates + more, cache: cache, now: t(0), options: options, limit: 1).map(\.number) == [1, 9, 10, 11, 12, 2])
     }
 
     @Test func nothingIsDueRightAfterAFetch() {
@@ -97,6 +100,34 @@ import Testing
         #expect(notes.first { $0.title == "Ready to complete" }?.body == "Approved by Priya Shah")
     }
 
+    @Test func aBuildThatFailsAgainIsNewsAgain() {
+        let failing = { (since: Date) in
+            [self.snapshot(1, group: .failing, reason: .buildFailed, headline: "Build failed", detail: "web-ci", since: since)]
+        }
+        let waiting = [snapshot(1, group: .waiting)]
+        let first = NotificationPlanner.plan(previous: waiting, current: failing(t(10)), notBefore: t(0))
+        let again = NotificationPlanner.plan(previous: waiting, current: failing(t(500)), notBefore: t(0))
+        #expect(first.count == 1 && again.count == 1)
+        #expect(first[0].id != again[0].id)
+        #expect(first[0].key == PRKey("contoso", 1))
+        // The same failure, back from Needs You once seen, has the same ID, so it isn't posted twice.
+        let fromNeedsYou = NotificationPlanner.plan(previous: [snapshot(1, group: .needsYou)], current: failing(t(10)), notBefore: t(0))
+        #expect(fromNeedsYou.map(\.id) == first.map(\.id))
+    }
+
+    @Test func eachPullRequestCanHaveItsOwnStartingPoint() {
+        let comment = PREvent(id: "c1", kind: .comment, at: t(100), actor: "Sam Rivera")
+        let current = [
+            snapshot(1, group: .needsYou, events: [comment]),
+            PRSnapshot(key: PRKey("fabrikam", 2), title: "Elsewhere", repository: "web", project: "P", author: "Sam Rivera", role: .author,
+                       isDraft: false, group: .needsYou, reason: .commented, headline: "", since: t(100),
+                       url: URL(string: "https://dev.azure.com/fabrikam")!, events: [comment], approvals: [], checkState: nil, hasDetails: true),
+        ]
+        // fabrikam was added at t(200): its earlier comment is in the panel, not news.
+        let notes = NotificationPlanner.plan(previous: [], current: current) { $0.key.organization == "fabrikam" ? t(200) : t(0) }
+        #expect(notes.map(\.key) == [PRKey("contoso", 1)])
+    }
+
     @Test func reviewsYouDoArentAnnouncedAsYours() {
         let before = [snapshot(1, group: .toReview, role: .reviewer)]
         let after = [snapshot(1, group: .done, reason: .completed, role: .reviewer)]
@@ -122,29 +153,31 @@ import Testing
         #expect(notes.last?.url == nil)
     }
 
-    @Test func briefPicksWhatMattersAndPromptsOneItemAtATime() {
-        let mention = PREvent(id: "c1.1", kind: .mention, at: t(0), actor: "Priya Shah", text: "Can you check the cache headers?", threadId: 1)
+    @Test func briefSummarizesAcrossGroupsAndPromptsOneItemAtATime() {
+        let mention = PREvent(id: "c1.1", kind: .mention, at: t(0), actor: "Priya Shah",
+                              text: "@Robin Diaz can you check the cache headers?", threadId: 1)
         let snapshots = [
             snapshot(1, group: .waiting),
             snapshot(2, group: .ready, reason: .readyToComplete, since: t(-10)),
             snapshot(3, group: .needsYou, reason: .mentioned, events: [mention], since: t(-5)),
             snapshot(4, group: .failing, reason: .buildFailed, detail: "web-ci", since: t(-1)),
             snapshot(5, group: .ready, reason: .autoComplete, since: t(-2)),
+            snapshot(6, group: .needsYou, reason: .reviewRequested, since: t(-20)),
         ]
-        let items = Brief.items(from: snapshots)
+        let items = Brief.items(from: snapshots, reader: "Robin Diaz")
+        // The newest of each group, rather than everything that needs you.
         #expect(items.map(\.key.number) == [3, 4, 5])
         #expect(items[0].sentence == "Priya Shah mentioned you on “Pull request 3”.")
-        #expect(items[0].prompt?.contains("Comment: Can you check the cache headers?") == true)
-        #expect(items[0].prompt?.contains("who mentioned you") == true)
+        #expect(items[0].prompt?.contains("Comment: you, can you check the cache headers?") == true)
+        #expect(items[0].prompt?.contains("From: Priya Shah, who mentioned you") == true)
         #expect(items[1].sentence == "“Pull request 4” failed: web-ci.")
         #expect(items[1].prompt == nil)
         #expect(items[2].sentence == "“Pull request 5” is approved and will complete automatically.")
-    }
 
-    @Test func gistsOnlyLongComments() {
-        #expect(Brief.gistPrompt(for: "Short and clear.") == nil)
-        let long = String(repeating: "This needs a closer look. ", count: 6)
-        #expect(Brief.gistPrompt(for: long)?.hasPrefix("Comment: This needs") == true)
+        // With fewer groups, more of what needs you.
+        let needs = Brief.items(from: [snapshots[2], snapshots[5], snapshots[0]])
+        #expect(needs.map(\.key.number) == [3, 6])
+        #expect(needs[1].sentence == "Sam Rivera asked you to review “Pull request 6”.")
     }
 }
 
@@ -257,6 +290,26 @@ import Testing
         )
         #expect(snapshot.records.count == 1)
         #expect(snapshot.problem == .someOrganizations("Couldn't read locked (No access to this organization.)."))
+    }
+
+    @Test func anOrganizationRemovedDuringARefreshStaysRemoved() async throws {
+        let server = StubServer()
+        server.serveOrganization(mine: [Fixture.pullRequest(1)])
+        server.serveOrganization("slow", mine: [Fixture.pullRequest(2)])
+        server.on("/slow/_apis/git/pullrequests") { _ in
+            Thread.sleep(forTimeInterval: 0.5)
+            return .json(Fixture.list([Fixture.pullRequest(2)]))
+        }
+        let engine = PulseEngine(
+            client: server.client(), configuration: PulseEngine.Configuration(organizations: [Fixture.org, "slow"])
+        ) { _ in }
+        async let refresh: Void = engine.refreshNow()
+        try await Task.sleep(for: .milliseconds(150))
+        await engine.setConfiguration(PulseEngine.Configuration(organizations: [Fixture.org]))
+        await refresh
+        let snapshot = await engine.currentSnapshot()
+        #expect(snapshot.records.map(\.id) == [PRKey(Fixture.org, 1)])
+        #expect(Set(snapshot.firstLoaded.keys) == [Fixture.org])
     }
 
     @Test func fetchesDetailsOnABudgetAfterTheFirstLoad() async {
