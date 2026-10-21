@@ -52,10 +52,12 @@ enum CLI {
             printTable(loaded)
             return loaded.items.isEmpty && loaded.problem != nil ? 1 : 0
         }
+        // The demo never uses the Azure CLI, your settings or Azure DevOps.
         if arguments.contains("--orgs") {
-            return listOrganizations()
+            return options.demo ? listDemoOrganizations() : listOrganizations()
         }
         if arguments.contains("--watch") {
+            if options.demo { return watchDemo() }
             watch(options)
         }
         return nil
@@ -197,6 +199,26 @@ enum CLI {
             FileHandle.standardError.write(Data("\(error.description)\n".utf8))
             return 1
         }
+    }
+
+    private static func listDemoOrganizations() -> Int32 {
+        print("1 organization; 1 with pull requests (*); watched by the app (+)")
+        print("*+ \(DemoData.organization)")
+        return 0
+    }
+
+    /// The made-up pull requests, then the demo's one change a second later, as `--watch` prints them.
+    private static func watchDemo() -> Int32 {
+        setvbuf(stdout, nil, _IOLBF, 0)
+        print("Watching \(DemoData.organization), made-up pull requests")
+        let now = Date()
+        let printer = WatchPrinter(seen: DemoData.seenState(now: now), options: ClassifierOptions())
+        let snapshot = DemoData.snapshot(now: now)
+        printer.print(snapshot)
+        Thread.sleep(forTimeInterval: 1)
+        printer.print(DemoData.update(snapshot, at: Date()))
+        print("That's all the demo does.")
+        return 0
     }
 
     private static func watch(_ options: Options) -> Never {

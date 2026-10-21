@@ -49,8 +49,12 @@ render: build
 demo-check: $(if $(filter command line,$(origin PULSE)),,build)
 	@counts=$$("$(PULSE)" --demo --json | jq -cS .counts); \
 	expected='{"done":1,"failing":2,"idle":2,"needsYou":3,"ready":2,"toReview":1,"waiting":2}'; \
-	if [ "$$counts" = "$$expected" ]; then echo "demo-check passed: $$counts"; \
-	else echo "demo-check failed: expected $$expected, got $$counts" >&2; exit 1; fi
+	if [ "$$counts" != "$$expected" ]; then echo "demo-check failed: expected $$expected, got $$counts" >&2; exit 1; fi; \
+	if ! "$(PULSE)" --demo --orgs | grep -qx '\*+ contoso'; then \
+		echo "demo-check failed: --demo --orgs doesn't list only the made-up organization" >&2; exit 1; fi; \
+	if ! "$(PULSE)" --demo --watch | grep -q 'needsYou  Priya Shah commented: !4091'; then \
+		echo "demo-check failed: --demo --watch doesn't show the made-up change" >&2; exit 1; fi; \
+	echo "demo-check passed: $$counts"
 
 # Renders the README screenshots from the demo data.
 screenshots: build
