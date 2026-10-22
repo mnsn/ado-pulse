@@ -35,12 +35,19 @@ final class PRStore: ObservableObject {
     @Published private(set) var chatAccess: AccessStatus?
     /// Why Notification Center couldn't be read, though ADO Pulse has access.
     @Published private(set) var chatProblem: String?
+    /// You turned pull requests sent in chats off, and ADO Pulse still has its Full Disk Access after trying to remove
+    /// it: you're asked to remove it in System Settings. They stay off meanwhile (`AppSettings.chatLinksKeptOff`).
+    @Published private(set) var chatAccessToRemove = false
     /// Opens the window that explains Full Disk Access.
     var showChatAccessSetup: (() -> Void)?
 
     let settings: AppSettings
     let summarizer: Summarizer
     let mode: Mode
+    /// How pull requests sent in chats are read: only the app's live store reads Notification Center.
+    let chats: ChatReading
+    /// Removing ADO Pulse's Full Disk Access, while that runs.
+    private(set) var accessRemoval: Task<Void, Never>?
     private let notifier: Notifier?
     private let tokens = AzureCLITokenProvider()
     private let client: ADOClient
@@ -63,11 +70,15 @@ final class PRStore: ObservableObject {
     private var isOnline = true
     private var cancellables: Set<AnyCancellable> = []
 
-    init(settings: AppSettings, summarizer: Summarizer = Summarizer(), notifier: Notifier? = nil, mode: Mode = .live) {
+    init(
+        settings: AppSettings, summarizer: Summarizer = Summarizer(), notifier: Notifier? = nil, mode: Mode = .live,
+        chats: ChatReading = .inert
+    ) {
         self.settings = settings
         self.summarizer = summarizer
         self.notifier = notifier
         self.mode = mode
+        self.chats = chats
         client = ADOClient(tokens: tokens)
         summarizer.isEnabled = settings.summaries
         notifier?.onBlockedChange = { [weak self] blocked in
@@ -101,6 +112,8 @@ final class PRStore: ObservableObject {
 
     func start() {
         guard ticker == nil else { return }
+        // Before watching the settings: turning the feature on here isn't you turning it on.
+        decideChatsAtLaunch()
         observeSettings()
         let ticker = Timer(timeInterval: 15, repeats: true) { [weak self] _ in
             MainActor.assumeIsolated { self?.tick() }
@@ -145,7 +158,7 @@ final class PRStore: ObservableObject {
         }
     }
 
-    private func observeSettings() {
+    func observeSettings() {
         Publishers.MergeMany(
             settings.$organizations.map { _ in () }.eraseToAnyPublisher(),
             settings.$refreshSeconds.map { _ in () }.eraseToAnyPublisher(),
@@ -164,7 +177,8 @@ final class PRStore: ObservableObject {
         }
         .store(in: &cancellables)
 
-        settings.$seen.dropFirst()
+        settings.$seen.dropFirst().map { _ in () }
+            .merge(with: settings.$seenSentInChats.dropFirst().map { _ in () })
             .receive(on: DispatchQueue.main)
             .sink { [weak self] _ in MainActor.assumeIsolated { self?.recompute() } }
             .store(in: &cancellables)
@@ -188,6 +202,7 @@ final class PRStore: ObservableObject {
             .sink { [weak self] enabled in
                 MainActor.assumeIsolated {
                     self?.setUpChatAccessWhenNeeded = enabled
+                    self?.chatsTurned(on: enabled)
                     self?.updateChatMonitor()
                 }
             }
@@ -206,19 +221,74 @@ final class PRStore: ObservableObject {
 
     // MARK: Pull requests sent in chats
 
+    /// Started as an app, ADO Pulse reads Notification Center with its own Full Disk Access, which only you can give
+    /// it: pull requests sent in chats are on at launch exactly while it has that access, unless you turned them off
+    /// and it may still have it. Preferences and launch arguments, which any program could set, don't turn them on.
+    /// Run from a shell, they're off until you turn them on.
+    func decideChatsAtLaunch() {
+        guard mode == .live, chats.usesOwnAccess else { return }
+        let access = chats.access()
+        if settings.chatLinksKeptOff {
+            if access == .denied {
+                settings.chatLinksKeptOff = false
+            } else {
+                Log.app.info("Pull requests sent in chats are off, and ADO Pulse may still have Full Disk Access: removing it")
+                removeOwnAccess()
+            }
+        } else if access == .granted {
+            settings.chatLinksEnabled = true
+        }
+    }
+
+    /// You turned pull requests sent in chats on or off. With ADO Pulse's own Full Disk Access, off removes that
+    /// access, and keeps them off until it's gone, even if removing it fails; on undoes that.
+    private func chatsTurned(on enabled: Bool) {
+        guard mode == .live, chats.usesOwnAccess else { return }
+        if enabled {
+            settings.chatLinksKeptOff = false
+            chatAccessToRemove = false
+        } else {
+            // Without access, as while you're still setting it up, there's nothing to remove.
+            guard chats.access() != .denied else { return }
+            settings.chatLinksKeptOff = true
+            settings.chatAccessWasGranted = false
+            removeOwnAccess()
+        }
+    }
+
+    /// Whether it worked is what macOS says afterwards: until the access is gone, the feature stays off, and you're asked
+    /// to remove it yourself.
+    private func removeOwnAccess() {
+        guard accessRemoval == nil else { return }
+        accessRemoval = Task { [weak self] in
+            guard let self else { return }
+            let reported = await chats.removeAccess()
+            accessRemoval = nil
+            let gone = chats.access() == .denied
+            if gone {
+                Log.app.info("Removed ADO Pulse's Full Disk Access")
+                if !settings.chatLinksEnabled { settings.chatLinksKeptOff = false }
+            } else {
+                Log.app.error("ADO Pulse still has Full Disk Access (removing it \(reported ? "seemed to work" : "failed", privacy: .public)): asking you to remove it")
+            }
+            chatAccessToRemove = !gone && !settings.chatLinksEnabled
+        }
+    }
+
     /// Reads Notification Center only while the feature is on; turning it off forgets what was found.
-    private func updateChatMonitor() {
+    func updateChatMonitor() {
         guard mode == .live else { return }
         if settings.chatLinksEnabled {
             guard chatMonitor == nil else { return }
             // Delivered on the main thread, where turning the feature off stops it: nothing it read before arrives after.
             var current: ChatLinkMonitor?
-            let monitor = ChatLinkMonitor(deliverOn: .main) { [weak self] snapshot in
+            let monitor = chats.monitor { [weak self] snapshot in
                 MainActor.assumeIsolated {
                     guard let self, let current, self.chatMonitor === current, self.settings.chatLinksEnabled else { return }
                     self.receiveChats(snapshot)
                 }
             }
+            guard let monitor else { return }
             current = monitor
             chatMonitor = monitor
             monitor.start()
@@ -249,7 +319,7 @@ final class PRStore: ObservableObject {
         }
         if snapshot.access == .granted {
             if settings.addChatLinks(snapshot.links) {
-                Log.app.info("Pull request links in chats: \(self.settings.chatLinks.links.count)")
+                Log.app.info("Pull request links in chats: \(self.settings.chatLinks.links.count, privacy: .private)")
             }
         } else if setUpChatAccessWhenNeeded {
             showChatAccessSetup?()
@@ -344,7 +414,7 @@ final class PRStore: ObservableObject {
         isPanelOpen = false
         let shown = answeredInPanel
         answeredInPanel = [:]
-        settings.markSeen(shown.map { (key: $0.key, date: $0.value) })
+        settings.markSeen(shown.map { (key: $0.key, date: $0.value) }, sentInChats: sentInChats(shown.keys))
     }
 
     private func noteAnsweredInPanel() {
@@ -369,15 +439,23 @@ final class PRStore: ObservableObject {
     }
 
     private func markSeen(_ item: PRSnapshot) {
-        settings.markSeen([item.key], at: max(Date(), item.events.map(\.at).max() ?? .distantPast))
+        settings.markSeen([item.key], at: max(Date(), item.events.map(\.at).max() ?? .distantPast), sentInChats: sentInChats([item.key]))
     }
 
     /// Marks a group's pull requests seen: Needs You moves on, Done empties. Each is seen up to what the panel
     /// showed, not up to now, so a comment that arrives before the next refresh still counts as new.
     func clear(_ group: PRGroup) {
-        settings.markSeen(items(in: group).map { item in
+        let cleared = items(in: group)
+        settings.markSeen(cleared.map { item in
             (item.key, item.events.map(\.at).max() ?? item.since ?? Date())
-        })
+        }, sentInChats: sentInChats(cleared.map(\.key)))
+    }
+
+    /// The pull requests among these that are listed only because someone sent them to you, or aren't listed at all:
+    /// what you've seen of them stays in memory (`AppSettings.seenSentInChats`).
+    private func sentInChats<S: Sequence>(_ keys: S) -> Set<PRKey> where S.Element == PRKey {
+        let yours = Set(state.records.filter { $0.role != .linked }.map(\.id))
+        return Set(keys).subtracting(yours)
     }
 
     func openPullRequestsPage() {
@@ -442,19 +520,20 @@ final class PRStore: ObservableObject {
                 settings.pruneSeen(keeping: Set(snapshot.records.map(\.id)))
             }
         }
+        // What earlier versions saved of pull requests sent in chats moves out of the preferences once they're listed.
+        settings.keepSeenInMemory(Set(snapshot.records.filter { $0.role == .linked }.map(\.id)))
         recompute(announce: true)
     }
 
     private func recompute(announce: Bool = false) {
         let now = Date()
-        let seen = settings.seen
         let options = settings.classifierOptions
         let links = settings.chatLinksEnabled ? settings.chatLinks : ChatLinkState()
         let resolved = state.records.compactMap { record -> PRSnapshot? in
             var record = record
             let found = links.links(for: record.id).filter { link in !record.chatLinks.contains { $0.id == link.id } }
             record.chatLinks += found
-            return PRClassifier.snapshot(for: record, seenCutoff: seen.cutoff(for: record.id), now: now, options: options)
+            return PRClassifier.snapshot(for: record, seenCutoff: settings.seenCutoff(for: record.id), now: now, options: options)
         }
         let sorted = PROrdering.sorted(resolved)
         self.now = now

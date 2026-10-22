@@ -81,9 +81,10 @@ The app binary doubles as a command-line tool:
 ```
 
 Add `--demo` to any of them to use the made-up pull requests, or `--org <name>` to read another
-organization. They read the app's settings (organizations, what you've seen) but never change them.
-`make dump`, `make watch` and `make render` run them from a debug build; `make render` writes your
-own pull requests to `render/`, which git ignores.
+organization. They read the app's settings (organizations, what you've seen) but never change them,
+and they leave out pull requests sent in chats, which only the app has, in memory: `--chats` lists
+the links Notification Center has. `make dump`, `make watch` and `make render` run them from a debug
+build; `make render` writes your own pull requests to `render/`, which git ignores.
 
 They, and `ADO_PULSE_NOTIFICATIONS_DB`, work only with the permissions of the app that started
 ADO Pulse, such as Terminal. Started as an app (Finder, a login item, `open`), or by a program that
@@ -114,6 +115,12 @@ log show --last 10m --info --predicate 'subsystem == "com.asaf.ADOPulse"' --styl
 - **Notification Center is read, never written.** Open its database read-only, keep reads short,
   and keep only pull request links and who sent them where: never a message's text. Test with the
   made-up database in the tests, or `ADO_PULSE_NOTIFICATIONS_DB` pointing at a copy.
+- **Nothing from Notification Center goes to the preferences**, which any program running as you can
+  read with `defaults read`, nor to the log or disk: the links people send in chats, and which of the
+  pull requests listed only because of them you've seen, stay in memory. And no preference or launch
+  argument turns the feature on: started as an app, ADO Pulse reads with its own Full Disk Access,
+  which is the switch, and turning the feature off removes it. `ChatLinkSettingsTests` and
+  `ChatReadingTests` check both, without reading Notification Center or changing Full Disk Access.
 - **Whoever starts ADO Pulse as an app chooses its arguments and environment, and can read its
   output.** Started by LaunchServices (`open --env … --stdout … --args …`), or by a program that
   disclaimed it, ADO Pulse has its own Full Disk Access (`Attribution.itself`). So nothing a caller

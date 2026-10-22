@@ -15,6 +15,9 @@ final class ChatAccessController: NSObject, ObservableObject, NSWindowDelegate {
     /// then Terminal's).
     let isBundled = Bundle.main.bundleIdentifier == AppSettings.domain
 
+    /// Whether macOS checks ADO Pulse's own Full Disk Access: it was started as an app, not from a shell.
+    var usesOwnAccess: Bool { isBundled && store.chats.usesOwnAccess }
+
     /// The folder the app is in, as you'd type it in an Open panel: `~/Applications` after `make install`.
     var appFolder: String {
         (Bundle.main.bundleURL.deletingLastPathComponent().path as NSString).abbreviatingWithTildeInPath
@@ -55,7 +58,8 @@ final class ChatAccessController: NSObject, ObservableObject, NSWindowDelegate {
         }
     }
 
-    func openPrivacySettings() {
+    /// System Settings › Privacy & Security › Full Disk Access.
+    static func openPrivacySettings() {
         let panes = [
             "x-apple.systempreferences:com.apple.settings.PrivacySecurity.extension?Privacy_AllFiles",
             "x-apple.systempreferences:com.apple.preference.security?Privacy_AllFiles",
@@ -110,7 +114,8 @@ struct ChatAccessView: View {
                 }
             }
 
-            Text("ADO Pulse looks for links to Azure DevOps pull requests in the notifications that macOS keeps in Notification Center, from Teams, Slack, Outlook or any other app. macOS protects that database, so ADO Pulse needs Full Disk Access to read it. It only reads it, and it keeps only the links it finds, with who sent them, in which app and when: never the messages, and nothing leaves your Mac.")
+            Text("ADO Pulse looks for links to Azure DevOps pull requests in the notifications that macOS keeps in Notification Center, from Teams, Slack, Outlook or any other app. macOS protects that database, so ADO Pulse needs Full Disk Access to read it. It only reads it, and it keeps only the links it finds, with who sent them, in which app and when, in memory: never the messages, and nothing leaves your Mac."
+                + (controller.usesOwnAccess ? " Turning this off removes its Full Disk Access again." : ""))
                 .fixedSize(horizontal: false, vertical: true)
 
             if settings.chatAccessWasGranted && !granted {
@@ -120,7 +125,7 @@ struct ChatAccessView: View {
                     .textSelection(.enabled)
             }
 
-            if controller.isBundled {
+            if controller.usesOwnAccess {
                 VStack(alignment: .leading, spacing: 6) {
                     step(1, "Click **Open Privacy Settings**. macOS doesn't add apps to that list by itself, so ADO Pulse isn't there yet.")
                     step(2, "Click **+** under the list and choose **ADO Pulse** in **\(controller.appFolder)** (press ⌘⇧G to type the folder). Or click **Show in Finder** and drag ADO Pulse into the list.")
@@ -132,7 +137,7 @@ struct ChatAccessView: View {
             }
 
             HStack {
-                Button("Open Privacy Settings") { controller.openPrivacySettings() }
+                Button("Open Privacy Settings") { ChatAccessController.openPrivacySettings() }
                     .keyboardShortcut(.defaultAction)
                 if controller.isBundled {
                     Button("Show in Finder") { controller.showInFinder() }

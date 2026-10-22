@@ -2,7 +2,9 @@ import ADOPulseCore
 import Combine
 import Foundation
 
-/// User preferences and what you've seen, persisted in UserDefaults.
+/// User preferences and what you've seen, persisted in UserDefaults. Nothing from Notification Center goes there: the
+/// links people sent you in chats, and what you've seen of the pull requests listed only because of them, stay in
+/// memory, since any program running as you can read the preferences.
 @MainActor
 final class AppSettings: ObservableObject {
     /// The app's preferences domain, which the command line reads too.
@@ -95,18 +97,31 @@ final class AppSettings: ObservableObject {
     @Published var hasDiscovered: Bool {
         didSet { defaults.set(hasDiscovered, forKey: Key.hasDiscovered) }
     }
-    /// Looks for pull request links in the notifications other apps post, such as Teams. Off by default:
-    /// it needs Full Disk Access. Turning it off forgets every link found.
+    /// Looks for pull request links in the notifications other apps post, such as Teams. Off by default: it needs Full
+    /// Disk Access. Not a preference, which any program running as you could set: started as an app, ADO Pulse turns it
+    /// on when it has its own Full Disk Access (`PRStore`), and you turn it on or off in its settings. Turning it off
+    /// forgets every link found.
     @Published var chatLinksEnabled: Bool {
         didSet {
-            defaults.set(chatLinksEnabled, forKey: Key.chatLinksEnabled)
             if !chatLinksEnabled { forgetChatLinks() }
         }
     }
-    /// The links found so far: who sent which pull request, in which app and when. Never the messages. They're
-    /// kept in the preferences only while the feature is on, and only the ones not expired: the preferences hold
-    /// just what's here.
+    /// The links found so far: who sent which pull request, in which app and when. Never the messages. They're kept in
+    /// memory only, and only while the feature is on: after a restart, ADO Pulse finds again only those whose
+    /// notifications Notification Center still has.
     @Published private(set) var chatLinks: ChatLinkState
+    /// You turned Pull Requests Sent in Chats off, and ADO Pulse may still have its Full Disk Access: it stays off,
+    /// whatever that access, until the access is gone or you turn it on again. A preference can hold it, since it can
+    /// only stop ADO Pulse reading.
+    @Published var chatLinksKeptOff: Bool {
+        didSet {
+            if chatLinksKeptOff {
+                defaults.set(true, forKey: Key.chatLinksKeptOff)
+            } else {
+                defaults.removeObject(forKey: Key.chatLinksKeptOff)
+            }
+        }
+    }
     /// ADO Pulse could read Notification Center before: if it can't now, it was probably rebuilt with
     /// another signature, and has to be added to Full Disk Access again.
     @Published var chatAccessWasGranted: Bool {
@@ -114,6 +129,10 @@ final class AppSettings: ObservableObject {
     }
     /// What the account signed in now has seen.
     @Published private(set) var seen: SeenState
+    /// When you last looked at each pull request that's listed only because someone sent it to you
+    /// (`PRKey.description`), in memory only, like the links: in the preferences, it would say which pull requests
+    /// people sent you.
+    @Published private(set) var seenSentInChats: [String: Date] = [:]
     /// What the other accounts you've signed in with have seen.
     private var otherSeen: [String: SeenState]
 
@@ -131,15 +150,18 @@ final class AppSettings: ObservableObject {
         organizations = defaults.stringArray(forKey: Key.organizations) ?? []
         knownOrganizations = defaults.stringArray(forKey: Key.knownOrganizations) ?? []
         hasDiscovered = defaults.bool(forKey: Key.hasDiscovered)
-        let chatLinksEnabled = defaults.bool(forKey: Key.chatLinksEnabled)
-        self.chatLinksEnabled = chatLinksEnabled
+        chatLinksEnabled = false
+        chatLinks = ChatLinkState()
         chatAccessWasGranted = defaults.bool(forKey: Key.chatAccessWasGranted)
-        let storedLinks = chatLinksEnabled
-            ? defaults.data(forKey: Key.chatLinks).flatMap { try? JSONDecoder().decode(ChatLinkState.self, from: $0) }
-            : nil
-        var links = storedLinks ?? ChatLinkState()
-        links.prune(now: now)
-        chatLinks = links
+        // Earlier versions kept the switch, and the links found, in plain preferences: any program running as you could
+        // read the links, and turn the switch on. Both go, whatever they said; a switch turned off still keeps the
+        // feature off, in case ADO Pulse kept its Full Disk Access.
+        let legacySwitch = defaults.object(forKey: Key.legacyChatLinksEnabled) as? Bool
+        let keptOff = defaults.bool(forKey: Key.chatLinksKeptOff) || legacySwitch == false
+        chatLinksKeptOff = keptOff
+        defaults.removeObject(forKey: Key.legacyChatLinksEnabled)
+        defaults.removeObject(forKey: Key.legacyChatLinks)
+        if keptOff { defaults.set(true, forKey: Key.chatLinksKeptOff) }
 
         otherSeen = defaults.data(forKey: Key.otherSeen).flatMap { try? JSONDecoder().decode([String: SeenState].self, from: $0) } ?? [:]
         if let data = defaults.data(forKey: Key.seen), let stored = try? JSONDecoder().decode(SeenState.self, from: data) {
@@ -148,9 +170,6 @@ final class AppSettings: ObservableObject {
             seen = SeenState.firstRun(now: now)
             persistSeen()
         }
-        // Links that expired, and any left from when the feature was on, go from the preferences too, not only from
-        // here: otherwise turning it off, which forgets what's here, could leave them there.
-        if chatLinks != storedLinks { persistChatLinks() }
     }
 
     private static func choice(_ value: Int, in choices: [Int], default fallback: Int) -> Int {
@@ -173,29 +192,64 @@ final class AppSettings: ObservableObject {
         )
     }
 
-    func markSeen<S: Sequence>(_ keys: S, at date: Date = Date()) where S.Element == PRKey {
-        markSeen(keys.map { ($0, date) })
+    func markSeen<S: Sequence>(_ keys: S, at date: Date = Date(), sentInChats: Set<PRKey> = []) where S.Element == PRKey {
+        markSeen(keys.map { ($0, date) }, sentInChats: sentInChats)
     }
 
-    /// Each pull request seen up to its own time.
-    func markSeen(_ entries: [(key: PRKey, date: Date)]) {
+    /// Each pull request seen up to its own time. Those in `sentInChats`, listed only because someone sent them to
+    /// you, are remembered in memory only, and leave the preferences if an earlier version saved them there.
+    func markSeen(_ entries: [(key: PRKey, date: Date)], sentInChats: Set<PRKey> = []) {
+        keepSeenInMemory(sentInChats)
         var updated = seen
-        for entry in entries { updated.markSeen([entry.key], at: entry.date) }
+        var inMemory = seenSentInChats
+        for entry in entries {
+            if sentInChats.contains(entry.key) {
+                inMemory[entry.key.description] = max(entry.date, inMemory[entry.key.description] ?? .distantPast)
+            } else {
+                updated.markSeen([entry.key], at: entry.date)
+            }
+        }
+        if inMemory != seenSentInChats { seenSentInChats = inMemory }
         guard updated != seen else { return }
+        seen = updated
+        persistSeen()
+    }
+
+    /// When you last looked at a pull request, as far as ADO Pulse remembers: in the preferences, or in memory.
+    func seenCutoff(for key: PRKey) -> Date {
+        max(seen.cutoff(for: key), seenSentInChats[key.description] ?? .distantPast)
+    }
+
+    /// Moves what the preferences say you've seen of these pull requests, listed only because someone sent them to
+    /// you, into memory. Earlier versions kept that in the preferences.
+    func keepSeenInMemory(_ keys: Set<PRKey>) {
+        let saved = keys.compactMap { key in seen.seenAt[key.description].map { (key: key.description, date: $0) } }
+        guard !saved.isEmpty else { return }
+        var inMemory = seenSentInChats
+        var updated = seen
+        for entry in saved {
+            inMemory[entry.key] = max(entry.date, inMemory[entry.key] ?? .distantPast)
+            updated.seenAt[entry.key] = nil
+        }
+        seenSentInChats = inMemory
         seen = updated
         persistSeen()
     }
 
     /// Forgets pull requests that are no longer listed and were last seen over two months ago.
     func pruneSeen(keeping keys: Set<PRKey>, now: Date = Date()) {
+        let cutoff = now.addingTimeInterval(-60 * 86_400)
+        let kept = Set(keys.map(\.description))
+        let inMemory = seenSentInChats.filter { kept.contains($0.key) || $0.value > cutoff }
+        if inMemory != seenSentInChats { seenSentInChats = inMemory }
         var updated = seen
-        updated.prune(keeping: keys, olderThan: now.addingTimeInterval(-60 * 86_400))
+        updated.prune(keeping: keys, olderThan: cutoff)
         guard updated != seen else { return }
         seen = updated
         persistSeen()
     }
 
-    /// Keeps newly found links, while the feature is on. Returns whether there were any.
+    /// Keeps newly found links, in memory, while the feature is on. Returns whether there were any.
     @discardableResult
     func addChatLinks(_ found: [ChatLink], now: Date = Date()) -> Bool {
         guard chatLinksEnabled else { return false }
@@ -204,14 +258,13 @@ final class AppSettings: ObservableObject {
         let pruned = updated.prune(now: now)
         guard changed || pruned else { return false }
         chatLinks = updated
-        persistChatLinks()
         return changed
     }
 
-    /// Forgets every link found: here, and in the preferences, whatever is left there.
+    /// Forgets every link found, and what you've seen of the pull requests listed only because of them.
     func forgetChatLinks() {
         if !chatLinks.links.isEmpty { chatLinks = ChatLinkState() }
-        defaults.removeObject(forKey: Key.chatLinks)
+        if !seenSentInChats.isEmpty { seenSentInChats = [:] }
     }
 
     /// Replaces the seen state, for the demo and for pictures.
@@ -225,6 +278,8 @@ final class AppSettings: ObservableObject {
     func useAccount(_ account: String, now: Date = Date()) -> Bool {
         var book = SeenBook(current: seen, others: otherSeen)
         let switched = book.signIn(account, now: now)
+        // What the last account saw of pull requests sent in chats was its own, and is kept in memory only.
+        if switched, !seenSentInChats.isEmpty { seenSentInChats = [:] }
         guard book.current != seen else { return switched }
         otherSeen = book.others
         seen = book.current
@@ -245,15 +300,6 @@ final class AppSettings: ObservableObject {
             organizations.removeAll { $0.caseInsensitiveCompare(name) == .orderedSame }
         } else {
             organizations = OrganizationDiscovery.merged(organizations, preferring: [name])
-        }
-    }
-
-    /// Keeps the links in the preferences, or removes them from there when there are none.
-    private func persistChatLinks() {
-        if chatLinks.links.isEmpty {
-            defaults.removeObject(forKey: Key.chatLinks)
-        } else if let data = try? JSONEncoder().encode(chatLinks) {
-            defaults.set(data, forKey: Key.chatLinks)
         }
     }
 
@@ -279,8 +325,11 @@ enum SettingsKey {
     static let knownOrganizations = "knownOrganizations"
     static let hasDiscovered = "hasDiscoveredOrganizations"
     static let seen = "seenState"
-    static let chatLinksEnabled = "chatLinksEnabled"
-    static let chatLinks = "chatLinks"
+    /// Keeps Pull Requests Sent in Chats off (`AppSettings.chatLinksKeptOff`): it can't turn it on.
+    static let chatLinksKeptOff = "chatLinksKeptOff"
+    /// Where earlier versions kept the switch and the links. Nothing writes them now: the app removes them at launch.
+    static let legacyChatLinksEnabled = "chatLinksEnabled"
+    static let legacyChatLinks = "chatLinks"
     static let chatAccessWasGranted = "chatAccessWasGranted"
     static let otherSeen = "otherAccountsSeenState"
 }

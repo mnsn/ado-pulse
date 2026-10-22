@@ -5,7 +5,8 @@
 - **Pull requests sent in chats**: turn it on, and when someone sends you a link to a pull request in
   Teams, Slack, an email or any other app, it shows in Needs You, as "Dana sent this in Teams", until
   you open it, vote or comment, it closes, or a week passes. Right-click it to open the message. It
-  reads Notification Center's database, so it needs Full Disk Access, and keeps only the links.
+  reads Notification Center's database, so it needs Full Disk Access, and it's on exactly while ADO
+  Pulse has that access: turning it off removes it. It keeps only the links, and only in memory.
 - **Answered**: when you take care of something that needed you in Azure DevOps (you vote, reply, or
   push the changes someone asked for), it moves to Answered, for example "You approved · Dana sent
   this in Teams", instead of disappearing into Idle. It stays until you've seen it in the panel, or
@@ -27,6 +28,11 @@
 
 Fixes:
 
+- Builds from source kept the links people sent you in chats, and which of those pull requests you'd
+  seen, in the preferences, where any program running as you could read them, and kept the setting
+  there too, where any program could turn it on. The links go from there at launch, and so does the
+  old setting: the feature is on while ADO Pulse has Full Disk Access, and if you'd turned it off,
+  it stays off, and ADO Pulse removes the access it kept.
 - A pull request in a project whose policies you can't read no longer shows as ready to complete;
   it waits, as "Can't read its policies", even when its threads couldn't be read either. Nor does
   one whose policies haven't been read again since its latest push or vote.

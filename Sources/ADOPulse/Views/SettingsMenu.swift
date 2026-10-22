@@ -20,6 +20,8 @@ struct SettingsMenuContent: View {
             .disabled(store.mode == .demo)
         if settings.chatLinksEnabled && store.chatAccess == .denied {
             Button("Allow Full Disk Access…") { store.showChatAccessSetup?() }
+        } else if store.chatAccessToRemove {
+            Button("Remove Full Disk Access in System Settings…") { ChatAccessController.openPrivacySettings() }
         }
 
         Divider()

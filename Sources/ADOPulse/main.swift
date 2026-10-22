@@ -45,7 +45,7 @@ MainActor.assumeIsolated {
     }
 
     let app = NSApplication.shared
-    let delegate = AppDelegate(mode: demo ? .demo : .live)
+    let delegate = AppDelegate(mode: demo ? .demo : .live, attribution: attribution)
     app.delegate = delegate
     app.setActivationPolicy(.accessory)
     withExtendedLifetime(delegate) {

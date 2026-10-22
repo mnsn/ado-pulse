@@ -71,6 +71,18 @@ struct MenuPanelView: View {
                     .fixedSize(horizontal: false, vertical: true)
             }
 
+            if store.chatAccessToRemove {
+                VStack(alignment: .leading, spacing: 4) {
+                    Label("Pull requests sent in chats are off, but ADO Pulse still has Full Disk Access. Remove ADO Pulse in System Settings › Privacy & Security › Full Disk Access.", systemImage: "lock.trianglebadge.exclamationmark")
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                    Button("Open Privacy Settings…") { ChatAccessController.openPrivacySettings() }
+                        .buttonStyle(.borderless)
+                }
+                .font(.system(size: 11))
+                .padding(.horizontal, 8)
+            }
+
             if settings.notifications && store.notificationsBlocked {
                 HStack(spacing: 6) {
                     Image(systemName: "bell.slash")

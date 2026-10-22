@@ -141,7 +141,7 @@ Open the gear menu in the menu-bar panel, or right-click the widget.
 | Notifications | on/off. If macOS blocks them, the panel offers to open System Settings |
 | Summaries by Apple Intelligence | on/off, when Apple Intelligence is available |
 | Show To Review in the Menu Bar | off by default |
-| Pull Requests Sent in Chats | off by default. Needs Full Disk Access: see [the FAQ](#how-does-it-find-pull-requests-people-send-me) |
+| Pull Requests Sent in Chats | off by default. Needs Full Disk Access, and is on while ADO Pulse has it: see [the FAQ](#how-does-it-find-pull-requests-people-send-me) |
 | Show Desktop Widget | on/off |
 | Widget Position | **On Desktop (Behind Windows)** like a real widget, or **Floating (Above Windows)** |
 | Widget Size | Compact (2 rows), Medium (4), Large (8) |
@@ -160,10 +160,12 @@ Open the gear menu in the menu-bar panel, or right-click the widget.
   Compute or any other model, so no comment or title leaves your Mac.
 - If you turn on **Pull Requests Sent in Chats**, ADO Pulse reads the notifications that macOS keeps
   in Notification Center, from every app, to find links to pull requests. It keeps only the links,
-  with who sent them, in which app and when, never the messages, and sends nothing anywhere. Turning
-  it off forgets them.
-- It stores its settings, and when you last opened each pull request from it, in its preferences on
-  your Mac. It collects no data and sends nothing anywhere else.
+  with who sent them, in which app and when, never the messages, and only in memory, where no other
+  program can read them. It sends nothing anywhere. Turning it off forgets them, and removes ADO
+  Pulse's Full Disk Access.
+- It stores its settings, and when you last opened each of your pull requests from it, in its
+  preferences on your Mac; nothing it reads in Notification Center goes there. It collects no data
+  and sends nothing anywhere else.
 
 ## FAQ
 
@@ -188,7 +190,14 @@ how to grant it when you turn the setting on. A pull request someone sent you ne
 open it from ADO Pulse, vote or comment on it, it closes, or a week goes by. If you vote or comment,
 it moves to **Answered** until you've seen it in the panel. Notification Center
 keeps only the latest hundred or so notifications per app, so ADO Pulse remembers the links it finds
-(only the links, as described in [Privacy](#privacy)).
+while it runs, in memory only (as described in [Privacy](#privacy)): after it restarts, it finds
+only those Notification Center still has, a couple of days' worth for Teams.
+
+The setting is on exactly while ADO Pulse has Full Disk Access, which only you can give it: no
+preference or launch argument, which other programs could set, turns it on. Turning it off removes
+that access, so to turn it on again, you add ADO Pulse to Full Disk Access again. If macOS doesn't
+let ADO Pulse remove it, the setting stays off anyway, and the panel asks you to remove ADO Pulse in
+System Settings › Privacy & Security › Full Disk Access.
 
 macOS ties Full Disk Access to the app's signature. Every release is signed with the same
 certificate, so updating keeps it. A copy you build yourself is signed ad hoc, so you allow each new
@@ -226,8 +235,9 @@ log show --last 10m --info --predicate 'subsystem == "com.asaf.ADOPulse"' --styl
 ```
 
 Their output includes your pull requests' titles and comments, so remove anything private before
-you share it. Run them from Terminal: started as an app (with `open`, say), ADO Pulse has its own
-Full Disk Access, so it refuses them.
+you share it. They leave out pull requests sent in chats, which only the app keeps, in memory. Run
+them from Terminal: started as an app (with `open`, say), ADO Pulse has its own Full Disk Access, so
+it refuses them.
 
 ## Contributing
 

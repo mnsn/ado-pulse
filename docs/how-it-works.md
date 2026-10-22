@@ -98,9 +98,11 @@ something you answered yourself that you haven't seen yet (see below).
 Azure DevOps has no read or unread state for pull requests, so ADO Pulse keeps its own
 (`SeenState`): activity up to a pull request's cutoff counts as seen. The cutoff is when you last
 opened the pull request from ADO Pulse (or clicked **Mark as Seen**), or, if that's earlier, three
-days before ADO Pulse first ran. Each account you sign in to the Azure CLI with has its own, since
-two accounts can see the same pull request: switching back to an account picks up where it left off,
-and nothing from the other account is announced.
+days before ADO Pulse first ran. It's kept in the preferences, except for pull requests listed only
+because someone sent you a link, whose cutoff stays in memory with the link (see
+[Pull requests sent in chats](#pull-requests-sent-in-chats)). Each account you sign in to the Azure
+CLI with has its own, since two accounts can see the same pull request: switching back to an account
+picks up where it left off, and nothing from the other account is announced.
 
 After the cutoff, these need you:
 
@@ -139,9 +141,10 @@ has posted (about the latest hundred per app; for Teams, a couple of days).
 
 - It opens the database with a read-only SQLite connection, for a short read each time, and never
   changes it. Like any SQLite reader, it takes brief shared locks and updates SQLite's shared-memory
-  index (`db-shm`) while it reads; neither changes any notification. It reads it when you turn the
-  setting on, whenever the database's write-ahead log changes (watched with kqueue, so a new message
-  shows within a second), when you open the panel, and once a minute.
+  index (`db-shm`) while it reads; neither changes any notification. It reads it when the setting
+  turns on (at launch, or when you turn it on), whenever the database's write-ahead log changes
+  (watched with kqueue, so a new message shows within a second), when you open the panel, and once a
+  minute.
 - Each notification's title, subtitle and text are searched for links to pull requests:
   `dev.azure.com/{org}/{project}/_git/{repo}/pullrequest/{id}` and the older
   `{org}.visualstudio.com/…/pullrequest/{id}`.
@@ -150,8 +153,20 @@ has posted (about the latest hundred per app; for Teams, a couple of days).
   group chat. In other apps, the title is taken as the sender.
 - Emails from Azure DevOps itself and ADO Pulse's own notifications are skipped.
 - It keeps only the link, the app, the sender, the time and, for Teams, the chat and message IDs (to
-  open the message). Never the message itself. Links are kept in ADO Pulse's preferences for two
-  weeks, and removed from there when they expire or you turn the setting off.
+  open the message). Never the message itself. Links are kept in memory only, for at most two weeks,
+  and forgotten when you turn the setting off. So is what you've seen of the pull requests listed
+  only because of a link. None of it goes to ADO Pulse's preferences, its log or disk, where any
+  program running as you could read it: only what you've seen of your own pull requests, and those
+  you review, is in the preferences. At launch, ADO Pulse removes the links that earlier builds saved
+  there (`chatLinks`). What they saved there of which of those pull requests you'd seen leaves them
+  once they're listed again, and otherwise two months after you last saw them, as for any pull
+  request no longer listed.
+- So after ADO Pulse restarts, it finds again only the links whose notifications Notification Center
+  still has (for Teams, about a couple of days' worth), and a pull request you'd seen, but not voted
+  or commented on since the message, needs you again.
+- The command line never has them: `--dump`, `--json` and `--watch` leave out pull requests sent in
+  chats, and `--chats` lists the links that Notification Center has, with the Full Disk Access of the
+  app whose shell runs it (see [Programs that start ADO Pulse](#programs-that-start-ado-pulse)).
 
 A pull request that isn't in your lists (you're not its author or a reviewer) is read with a GET by
 its ID, and listed only while the link needs you. A link needs you until you open the pull request
@@ -162,9 +177,9 @@ Links aren't announced: the app they came in already did.
 macOS protects that database, so ADO Pulse needs Full Disk Access, which it asks for when you turn the
 setting on, and macOS ties that access to the app's code signature. A build from source is signed ad
 hoc, a signature that changes with every build, so access has to be allowed again after each one.
-macOS keeps the requirement of the build you allowed, and turning the switch off and on keeps it too:
-remove ADO Pulse from the list, or run `tccutil reset SystemPolicyAllFiles com.asaf.ADOPulse`, and add
-it again.
+macOS keeps the requirement of the build you allowed, and turning ADO Pulse's switch in that list off
+and on keeps it too: remove ADO Pulse from the list, or run
+`tccutil reset SystemPolicyAllFiles com.asaf.ADOPulse`, and add it again.
 `make signing-identity` instead creates a self-signed certificate, and builds signed with it keep the
 same designated requirement, so access survives rebuilds. It imports the certificate's key with
 `scripts/signing-key.swift`, so that no app may use it without asking, codesign and security included,
@@ -182,6 +197,29 @@ project's own certificate, whose key the release workflow imports the same way, 
 signs with the same way (see "Releasing" in [CONTRIBUTING.md](../CONTRIBUTING.md)), so access survives
 updates.
 
+### Whether it's on
+
+Whether ADO Pulse reads Notification Center isn't a preference, which any program running as you
+could set with `defaults write`, or pass as a launch argument (`--args -chatLinksEnabled YES`).
+Started as an app, ADO Pulse reads with its own Full Disk Access, which only you can give it, in
+System Settings, so that's the switch (`PRStore.decideChatsAtLaunch`):
+
+- At launch, the setting is on exactly while ADO Pulse has that access.
+- Turning it off forgets the links and removes the access again
+  (`tccutil reset SystemPolicyAllFiles com.asaf.ADOPulse`, responsible for itself like every program
+  ADO Pulse starts), so ADO Pulse doesn't keep Full Disk Access it doesn't use, and no program can
+  use it. To turn it on again, you add ADO Pulse to Full Disk Access again.
+- If ADO Pulse still has the access after removing it, the setting stays off anyway. A preference
+  (`chatLinksKeptOff`) keeps it off at every launch while ADO Pulse has the access, ADO Pulse tries
+  again to remove it, and the panel asks you to remove ADO Pulse in System Settings › Privacy &
+  Security › Full Disk Access yourself. The preference goes once the access is gone, or when you
+  turn the setting on. Any program could write it too, but it can only stop ADO Pulse reading. A
+  setting you turned off in an earlier build, which kept Full Disk Access, counts the same.
+
+Run from a shell, ADO Pulse reads with that app's Full Disk Access, which isn't its own to remove:
+there, the setting starts off, and lasts until ADO Pulse quits. `--render`, the demo and the tests
+never read Notification Center at all.
+
 ## Programs it starts
 
 macOS attributes a program to the app that started it, its "responsible process", and lets it use
@@ -191,8 +229,9 @@ Full Disk Access, a program it started would have it too. It starts:
 - the Azure CLI, a Python program, usually in `/opt/homebrew`: anything running as you can change it,
   or the Python files it runs,
 - your login shell, which ADO Pulse asks where `az` is: it runs your shell's startup files, which
-  anything running as you can change too, and
-- the helper that opens ADO Pulse again once you've allowed Full Disk Access.
+  anything running as you can change too,
+- the helper that opens ADO Pulse again once you've allowed Full Disk Access, and
+- `tccutil`, which removes ADO Pulse's Full Disk Access when you turn pull requests sent in chats off.
 
 Every program ADO Pulse starts therefore goes through `ProcessRunner`
 (`Sources/ADOPulseCore/ProcessRunner.swift`). It starts the program with `posix_spawn` and that
@@ -272,6 +311,7 @@ widget is a borderless panel the app draws itself, at desktop level.
 
 - Pull requests sent in chats are only as complete as Notification Center: a message you saw in the
   app before it posted a notification, or one older than the notifications it keeps, isn't there.
+  ADO Pulse keeps the links in memory, so after a restart, that's all it knows.
 - Pull requests assigned only to a group or team you're in aren't listed: Azure DevOps's reviewer
   search matches you, not your groups.
 - Organizations in other Microsoft Entra tenants than the Azure CLI's default can't be read with its

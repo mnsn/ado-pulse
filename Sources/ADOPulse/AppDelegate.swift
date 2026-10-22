@@ -1,3 +1,4 @@
+import ADOPulseCore
 import AppKit
 
 @MainActor
@@ -6,12 +7,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private let settings: AppSettings
     private let loginItem = LoginItem()
     private let notifier = Notifier()
-    private lazy var store = PRStore(settings: settings, notifier: notifier, mode: mode)
+    private let chats: ChatReading
+    private lazy var store = PRStore(settings: settings, notifier: notifier, mode: mode, chats: chats)
     private var statusItem: StatusItemController?
     private var widget: DesktopWidgetController?
     private var chatAccess: ChatAccessController?
 
-    init(mode: PRStore.Mode) {
+    init(mode: PRStore.Mode, attribution: Attribution) {
         self.mode = mode
         if mode == .demo, let defaults = UserDefaults(suiteName: "ADOPulse.demo") {
             // The demo never touches your settings or what you've seen.
@@ -20,6 +22,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         } else {
             settings = AppSettings()
         }
+        // Only the live app reads Notification Center, with the permissions macOS gave the process.
+        chats = mode == .live ? .notificationCenter(attribution) : .inert
         super.init()
     }
 

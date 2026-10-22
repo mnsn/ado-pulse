@@ -20,8 +20,10 @@ enum CLI {
           --help           Show this help
 
         ADO Pulse signs in with the Azure CLI (az login) and only reads: every request is a GET.
-        The modes above run only from a shell, such as Terminal's, with its permissions: started as an
-        app (by open, say), ADO Pulse has its own Full Disk Access, so it refuses them.
+        --dump, --json and --watch leave out pull requests sent in chats, which only the app keeps, in
+        memory: --chats lists the links. The modes above run only from a shell, such as Terminal's,
+        with its permissions: started as an app (by open, say), ADO Pulse has its own Full Disk Access,
+        so it refuses them.
         """
 
     /// The modes that run instead of the app, and print or save what they read.
@@ -111,13 +113,6 @@ enum CLI {
         )
     }
 
-    /// The links the app found, when pull requests sent in chats are on.
-    private static func chatLinks() -> ChatLinkState {
-        guard appDefaults?.bool(forKey: SettingsKey.chatLinksEnabled) == true else { return ChatLinkState() }
-        return appDefaults?.data(forKey: SettingsKey.chatLinks).flatMap { try? JSONDecoder().decode(ChatLinkState.self, from: $0) }
-            ?? ChatLinkState()
-    }
-
     /// What the app's accounts have seen.
     private static func seenBook() -> SeenBook {
         let decoder = JSONDecoder()
@@ -129,13 +124,10 @@ enum CLI {
         )
     }
 
-    static func resolve(
-        _ snapshot: PulseSnapshot, seen: SeenState, options: ClassifierOptions, links: ChatLinkState = ChatLinkState(), now: Date = Date()
-    ) -> [PRSnapshot] {
+    /// Without pull requests sent in chats: only the app finds those, and keeps them in memory.
+    static func resolve(_ snapshot: PulseSnapshot, seen: SeenState, options: ClassifierOptions, now: Date = Date()) -> [PRSnapshot] {
         PROrdering.sorted(snapshot.records.compactMap { record in
-            var record = record
-            record.chatLinks += links.links(for: record.id).filter { link in !record.chatLinks.contains { $0.id == link.id } }
-            return PRClassifier.snapshot(for: record, seenCutoff: seen.cutoff(for: record.id), now: now, options: options)
+            PRClassifier.snapshot(for: record, seenCutoff: seen.cutoff(for: record.id), now: now, options: options)
         })
     }
 
@@ -167,12 +159,10 @@ enum CLI {
             }
         }
         let configuration = PulseEngine.Configuration(organizations: organizations, keepDoneFor: classifierOptions().keepDoneFor)
-        let links = chatLinks()
-        let snapshot = wait { await PulseEngine.loadOnce(client: client, configuration: configuration, linked: links.keys) }
+        let snapshot = wait { await PulseEngine.loadOnce(client: client, configuration: configuration) }
         return Loaded(
-            organizations: organizations, items: resolve(
-                snapshot, seen: seenBook().state(for: snapshot.account), options: classifierOptions(), links: links
-            ),
+            organizations: organizations,
+            items: resolve(snapshot, seen: seenBook().state(for: snapshot.account), options: classifierOptions()),
             problem: snapshot.problem?.message
         )
     }
@@ -306,7 +296,7 @@ enum CLI {
         setvbuf(stdout, nil, _IOLBF, 0)
         print("Watching \(DemoData.organization), made-up pull requests")
         let now = Date()
-        let printer = WatchPrinter(seen: SeenBook(current: DemoData.seenState(now: now)), options: ClassifierOptions(), links: ChatLinkState())
+        let printer = WatchPrinter(seen: SeenBook(current: DemoData.seenState(now: now)), options: ClassifierOptions())
         let snapshot = DemoData.snapshot(now: now)
         printer.print(snapshot)
         Thread.sleep(forTimeInterval: 1)
@@ -319,18 +309,14 @@ enum CLI {
         let organizations = options.organizations.isEmpty
             ? appDefaults?.stringArray(forKey: SettingsKey.organizations) ?? []
             : options.organizations
-        let links = chatLinks()
-        let printer = WatchPrinter(seen: seenBook(), options: classifierOptions(), links: links)
+        let printer = WatchPrinter(seen: seenBook(), options: classifierOptions())
         let queue = DispatchQueue(label: "ADOPulse.watch")
         let engine = PulseEngine(
             client: ADOClient(tokens: AzureCLITokenProvider()), configuration: PulseEngine.Configuration(organizations: organizations)
         ) { snapshot in queue.async { printer.print(snapshot) } }
         setvbuf(stdout, nil, _IOLBF, 0)
         print("Watching \(organizations.joined(separator: ", ")), refreshing every minute — Ctrl-C to stop")
-        Task {
-            await engine.setLinkedPullRequests(links.keys)
-            await engine.start()
-        }
+        Task { await engine.start() }
         withExtendedLifetime(engine) { dispatchMain() }
     }
 
@@ -355,7 +341,6 @@ enum CLI {
 private final class WatchPrinter: @unchecked Sendable {
     private var seen: SeenBook
     private let options: ClassifierOptions
-    private let links: ChatLinkState
     private var problem: String?
     private var previous: [String: PRSnapshot] = [:]
     private let formatter: DateFormatter = {
@@ -364,10 +349,9 @@ private final class WatchPrinter: @unchecked Sendable {
         return formatter
     }()
 
-    init(seen: SeenBook, options: ClassifierOptions, links: ChatLinkState) {
+    init(seen: SeenBook, options: ClassifierOptions) {
         self.seen = seen
         self.options = options
-        self.links = links
     }
 
     func print(_ snapshot: PulseSnapshot) {
@@ -380,7 +364,7 @@ private final class WatchPrinter: @unchecked Sendable {
         }
         // Once, so an account's first run starts when it was first seen.
         if let account = snapshot.account { seen.signIn(account, now: now) }
-        for item in CLI.resolve(snapshot, seen: seen.current, options: options, links: links, now: now) {
+        for item in CLI.resolve(snapshot, seen: seen.current, options: options, now: now) {
             let old = previous[item.id]
             previous[item.id] = item
             guard old == nil || old?.group != item.group || old?.headline != item.headline || old?.detail != item.detail else { continue }
