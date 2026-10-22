@@ -41,26 +41,9 @@ final class FakeChatReading {
     }
 }
 
-/// A preferences suite of the test's own, removed afterwards.
-func withPreferences<T>(_ body: (UserDefaults, String) throws -> T) throws -> T {
-    let suite = "ADOPulseTests.\(UUID().uuidString)"
-    guard let defaults = UserDefaults(suiteName: suite) else { throw CocoaError(.featureUnsupported) }
-    defer { defaults.removePersistentDomain(forName: suite) }
-    return try body(defaults, suite)
-}
-
-/// The same, for tests that wait.
-@MainActor
-func withPreferences(_ body: @MainActor (UserDefaults, String) async throws -> Void) async throws {
-    let suite = "ADOPulseTests.\(UUID().uuidString)"
-    guard let defaults = UserDefaults(suiteName: suite) else { throw CocoaError(.featureUnsupported) }
-    defer { defaults.removePersistentDomain(forName: suite) }
-    try await body(defaults, suite)
-}
-
-/// Everything a preferences suite holds, as text: what any program running as you could read there.
-func readable(_ defaults: UserDefaults, suite: String) -> String {
-    (defaults.persistentDomain(forName: suite) ?? [:]).map { key, value in
+/// Everything the preferences would hold, as text: what any program running as you could read there.
+func readable(_ defaults: MemoryDefaults) -> String {
+    defaults.stored.map { key, value in
         "\(key)=" + ((value as? Data).map { String(decoding: $0, as: UTF8.self) } ?? "\(value)")
     }.sorted().joined(separator: "\n")
 }

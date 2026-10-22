@@ -11,8 +11,13 @@ SCREENSHOTS := menubar-light menubar-dark widget-large-light widget-large-dark
 build:
 	swift build
 
+# The tests keep preferences in memory (MemoryDefaults): a UserDefaults suite would leave a file in
+# ~/Library/Preferences, even once removed. So a test run fails if one appears there.
 test:
+	@mkdir -p .build && touch .build/test-started
 	swift test $(if $(wildcard $(TESTING_PLUGINS)),-Xswiftc -plugin-path -Xswiftc $(TESTING_PLUGINS))
+	@left="$$(find "$$HOME/Library/Preferences" -maxdepth 1 -name 'ADOPulse*' -newer .build/test-started 2>/dev/null)"; \
+	if [ -n "$$left" ]; then echo "The tests left preferences behind:" >&2; echo "$$left" >&2; exit 1; fi
 
 app:
 	./scripts/build-app.sh

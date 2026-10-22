@@ -136,6 +136,11 @@ log show --last 10m --info --predicate 'subsystem == "com.asaf.ADOPulse"' --styl
 - **Logic goes in `ADOPulseCore`.** Keep it free of UI code and cover changes with tests in
   `Tests/ADOPulseCoreTests`. The app target displays what the engine publishes, and keeps your
   settings in its preferences: test what it keeps there in `Tests/ADOPulseTests`.
+- **Tests leave nothing behind.** They write only to temporary directories, and keep preferences in
+  `MemoryDefaults` wherever code takes a `UserDefaults`: a UserDefaults suite leaves a file in
+  `~/Library/Preferences`, even once its domain is removed. A test fails if one opens a suite or
+  changes the test process's preferences, and `make test` fails if a file named `ADOPulse…` appears
+  there while the tests run.
 - **Use made-up data.** Pull request titles, people's names, comments and repository names from
   your own organizations are private. Don't put them in tests, screenshots, issues or pull requests.
 - **The API is lenient here.** Azure DevOps adds fields and policy types over time. When you rely on
