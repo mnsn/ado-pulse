@@ -17,6 +17,9 @@
   codesign, and it can't be exported. Builds sign with that exact certificate, by its SHA-1, never one
   with a name like it, and won't sign with a key that some app may use without asking (Always Allow).
   `scripts/make-signing-identity.sh --delete` goes back to ad hoc builds.
+- The programs ADO Pulse starts (the Azure CLI, and your login shell when it looks for `az`) are
+  responsible for themselves, so they don't get the Full Disk Access you give ADO Pulse: anything
+  running as you could change them, or the files they run, and so use it.
 
 Fixes:
 

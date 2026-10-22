@@ -44,6 +44,7 @@ group is decided.
 ```text
 Sources/ADOPulseCore/   the engine; UI-free, and fully tested
   Auth                  the token provider protocol, and the Azure CLI provider
+  ProcessRunner         starts every program the app runs, each responsible for itself
   ADOClient             GET-only HTTP client, endpoint URLs, Retry-After handling
   APIModels             the Azure DevOps JSON it reads, decoded leniently
   PullRequest           pull requests, reviewers and votes

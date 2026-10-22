@@ -18,7 +18,9 @@ An app started from Finder or as a login item doesn't get your shell's `PATH`, s
 for `az` in `/opt/homebrew/bin`, `/usr/local/bin` and the other usual places, then asks your login
 shell (`command -v az`). Its runs of `az` turn off the CLI's telemetry and warnings, and each is
 limited to a minute: `az` runs in a process group of its own, which is ended at the time limit, and
-anything it leaves running that keeps its output open is ended half a second after it exits.
+anything it leaves running that keeps its output open is ended half a second after it exits. `az` and
+the login shell are responsible for themselves, so they don't get ADO Pulse's permissions (see
+[Programs it starts](#programs-it-starts)).
 
 Signing in sits behind a small protocol (`AccessTokenProvider`). A provider using Microsoft's
 authentication library (MSAL) can be added once there's an app registration to sign in with.
@@ -179,6 +181,33 @@ so, builds are signed ad hoc, and with two, they aren't signed at all. Releases 
 project's own certificate, whose key the release workflow imports the same way, for codesign only, and
 signs with the same way (see "Releasing" in [CONTRIBUTING.md](../CONTRIBUTING.md)), so access survives
 updates.
+
+## Programs it starts
+
+macOS attributes a program to the app that started it, its "responsible process", and lets it use
+that app's privacy permissions: a shell in Terminal is Terminal's, for example. So once ADO Pulse has
+Full Disk Access, a program it started would have it too. It starts:
+
+- the Azure CLI, a Python program, usually in `/opt/homebrew`: anything running as you can change it,
+  or the Python files it runs,
+- your login shell, which ADO Pulse asks where `az` is: it runs your shell's startup files, which
+  anything running as you can change too, and
+- the helper that opens ADO Pulse again once you've allowed Full Disk Access.
+
+Every program ADO Pulse starts therefore goes through `ProcessRunner`
+(`Sources/ADOPulseCore/ProcessRunner.swift`). It starts the program with `posix_spawn` and that
+responsibility disclaimed (`responsibility_spawnattrs_setdisclaim`, as Chromium and LLDB do), so the
+program is responsible for itself, and gets only the permissions macOS gave it. The call is private to
+macOS, so it's looked up when it's needed, and without it nothing is started. After starting a
+program, ADO Pulse asks macOS who's responsible for it, and logs a fault if it's anyone but the
+program itself. Apps, links and files it opens (your browser, Teams, System Settings, Terminal for
+`az login`) go through LaunchServices instead, which makes each app responsible for itself.
+
+Tests check that a program `ProcessRunner` starts reports itself as responsible, where one started
+without that reports what started the test, and that no other code in the app starts programs. (Some
+apps that run commands start them responsible for themselves, and then everything those start is too,
+so run from one of them, the first check can't tell the difference. From Terminal, and on GitHub
+Actions, it can.)
 
 ## Notifications
 

@@ -20,6 +20,8 @@ reporting:
 - with **Pull Requests Sent in Chats** on: any way it could change Notification Center's data, keep a
   message's text, or let a notification make it open something other than an Azure DevOps pull
   request or the message it came in,
+- any way a program it starts, or anything that can change one, could use its permissions, such as
+  its Full Disk Access,
 - any way another app or a web page could make it run a command or open a link it shouldn't, and
 - problems with how the build scripts and workflows here build, sign or publish the app.
 
@@ -34,6 +36,19 @@ Vulnerabilities in Azure DevOps or the Azure CLI themselves should go to Microso
 - It doesn't write the token anywhere: not to disk, its preferences or its logs. The Azure CLI keeps
   its own sign-in, in its own files.
 - Its requests use an ephemeral session: no cookies, no cache.
+
+## Programs it starts
+
+macOS lets a program use the privacy permissions of the app that started it, its "responsible
+process". ADO Pulse starts the Azure CLI, a Python program, usually in `/opt/homebrew`; your login
+shell, which it asks where `az` is; and the helper that opens ADO Pulse again once you've allowed Full
+Disk Access. Anything running as you can change the Azure CLI, the Python files it runs, and your
+shell's startup files. So ADO Pulse starts every program responsible for itself, with only the
+permissions macOS gave that program, never ADO Pulse's Full Disk Access. The call that does
+it (`responsibility_spawnattrs_setdisclaim`, which Chromium and LLDB use too) is private to macOS:
+without it, ADO Pulse starts nothing. Apps, links and files it opens (your browser, Teams, Terminal for
+`az login`) are opened by macOS, which makes each responsible for itself. Tests check that a program it
+starts is responsible for itself, and that nothing else in the app starts programs.
 
 ## Supported versions
 

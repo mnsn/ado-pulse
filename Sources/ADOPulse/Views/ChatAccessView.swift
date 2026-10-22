@@ -70,17 +70,14 @@ final class ChatAccessController: NSObject, ObservableObject, NSWindowDelegate {
     }
 
     /// Quits and opens the app again, once this process has exited, for when macOS only applies access
-    /// after a restart.
+    /// after a restart. The helper that waits is responsible for itself, like every program ADO Pulse starts.
     func relaunch() {
         guard isBundled else { return }
-        let process = Process()
-        process.executableURL = URL(fileURLWithPath: "/bin/sh")
-        process.arguments = [
-            "-c", "while /bin/kill -0 \"$1\" 2>/dev/null; do /bin/sleep 0.2; done; /usr/bin/open \"$0\"",
-            Bundle.main.bundlePath, String(ProcessInfo.processInfo.processIdentifier),
-        ]
         do {
-            try process.run()
+            try ProcessRunner.launch(URL(fileURLWithPath: "/bin/sh"), arguments: [
+                "-c", "while /bin/kill -0 \"$1\" 2>/dev/null; do /bin/sleep 0.2; done; /usr/bin/open \"$0\"",
+                Bundle.main.bundlePath, String(ProcessInfo.processInfo.processIdentifier),
+            ])
             NSApp.terminate(nil)
         } catch {
             Log.app.error("Couldn't relaunch: \(error.localizedDescription, privacy: .public)")
