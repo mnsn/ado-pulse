@@ -62,6 +62,7 @@ Sources/ADOPulseCore/   the engine; UI-free, and fully tested
 Sources/ADOPulse/       the AppKit/SwiftUI app: menu bar, panel, widget, settings, notifications,
                         on-device summaries, command line and renderer
 Tests/ADOPulseCoreTests/  Swift Testing suites, including the engine against a stub Azure DevOps
+Tests/ADOPulseTests/    the app's own logic that keeps your data, such as its settings
 scripts/                app bundling, signing, checking and packaging, and the icon
 ```
 
@@ -110,7 +111,8 @@ log show --last 10m --info --predicate 'subsystem == "com.asaf.ADOPulse"' --styl
   cloud model: pull request titles and comments mustn't leave the Mac. Decide in code what matters,
   and give the model one item at a time.
 - **Logic goes in `ADOPulseCore`.** Keep it free of UI code and cover changes with tests in
-  `Tests/ADOPulseCoreTests`. The app target only displays what the engine publishes.
+  `Tests/ADOPulseCoreTests`. The app target displays what the engine publishes, and keeps your
+  settings in its preferences: test what it keeps there in `Tests/ADOPulseTests`.
 - **Use made-up data.** Pull request titles, people's names, comments and repository names from
   your own organizations are private. Don't put them in tests, screenshots, issues or pull requests.
 - **The API is lenient here.** Azure DevOps adds fields and policy types over time. When you rely on

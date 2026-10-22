@@ -21,5 +21,10 @@ let package = Package(
             name: "ADOPulseCoreTests",
             dependencies: ["ADOPulseCore"]
         ),
+        // The app's own logic that keeps your data, such as its settings.
+        .testTarget(
+            name: "ADOPulseTests",
+            dependencies: ["ADOPulse", "ADOPulseCore"]
+        ),
     ]
 )
