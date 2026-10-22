@@ -45,6 +45,7 @@ group is decided.
 Sources/ADOPulseCore/   the engine; UI-free, and fully tested
   Auth                  the token provider protocol, and the Azure CLI provider
   ProcessRunner         starts every program the app runs, each responsible for itself
+  Attribution           whose permissions ADO Pulse has: its own, or those of the app starting it
   ADOClient             GET-only HTTP client, endpoint URLs, Retry-After handling
   APIModels             the Azure DevOps JSON it reads, decoded leniently
   PullRequest           pull requests, reviewers and votes
@@ -84,6 +85,12 @@ organization. They read the app's settings (organizations, what you've seen) but
 `make dump`, `make watch` and `make render` run them from a debug build; `make render` writes your
 own pull requests to `render/`, which git ignores.
 
+They, and `ADO_PULSE_NOTIFICATIONS_DB`, work only with the permissions of the app that started
+ADO Pulse, such as Terminal. Started as an app (Finder, a login item, `open`), or by a program that
+disclaimed it, ADO Pulse has its own Full Disk Access, so it refuses them and ignores the variable
+([Ground rules](#ground-rules)). Run `make demo`, `make demo-check` and the rest from a shell, as
+the Makefile does.
+
 Diagnostics go to the system log:
 
 ```sh
@@ -107,6 +114,15 @@ log show --last 10m --info --predicate 'subsystem == "com.asaf.ADOPulse"' --styl
 - **Notification Center is read, never written.** Open its database read-only, keep reads short,
   and keep only pull request links and who sent them where: never a message's text. Test with the
   made-up database in the tests, or `ADO_PULSE_NOTIFICATIONS_DB` pointing at a copy.
+- **Whoever starts ADO Pulse as an app chooses its arguments and environment, and can read its
+  output.** Started by LaunchServices (`open --env … --stdout … --args …`), or by a program that
+  disclaimed it, ADO Pulse has its own Full Disk Access (`Attribution.itself`). So nothing a caller
+  chooses may decide what it reads with that access, or carry what it read anywhere the caller can
+  read: no command-line mode or `--render` runs (`CLI.refusal`), `-key value` arguments don't
+  reach its preferences, its standard output and error go to `/dev/null`, and the variables that
+  point it at other data are read only through `Attribution.environment`, which is empty then. A
+  test fails if code reads the environment anywhere else, until it's checked and listed with its
+  reason.
 - **On-device summaries only.** Use `SystemLanguageModel.default`, never Private Cloud Compute or a
   cloud model: pull request titles and comments mustn't leave the Mac. Decide in code what matters,
   and give the model one item at a time.

@@ -12,14 +12,33 @@ enum CLI {
           --json           Print the same as JSON, with counts
           --watch          Print changes as they happen (Ctrl-C to stop)
           --orgs           List your organizations, and the ones where you have pull requests
-          --chats          List the pull request links in Notification Center's notifications (needs Full Disk Access)
+          --chats          List the pull request links in Notification Center's notifications (run it from Terminal,
+                           which needs Full Disk Access)
           --render <dir>   Draw the menu bar with the panel open, and each widget size, to PNGs (light and dark)
           --demo           Use made-up pull requests, with any of the above or the app
           --org <name>     Read this organization instead of the app's choice (repeatable)
           --help           Show this help
 
         ADO Pulse signs in with the Azure CLI (az login) and only reads: every request is a GET.
+        The modes above run only from a shell, such as Terminal's, with its permissions: started as an
+        app (by open, say), ADO Pulse has its own Full Disk Access, so it refuses them.
         """
+
+    /// The modes that run instead of the app, and print or save what they read.
+    static let modes = ["--dump", "--json", "--watch", "--orgs", "--chats", "--render"]
+
+    /// Why the command-line modes and `--render` can't run, or nil when they can. They print or save what they read,
+    /// so they run only with the permissions of the app that started ADO Pulse, such as Terminal. Started as an app
+    /// (by `open`, say), or by a program that disclaimed it, ADO Pulse has its own Full Disk Access, and whoever
+    /// started it chose the arguments and could read the output, even with `--demo`.
+    static func refusal(_ arguments: [String], attribution: Attribution) -> String? {
+        guard attribution == .itself, arguments.contains(where: modes.contains) else { return nil }
+        return """
+            ADO Pulse's command-line modes and --render run only from a shell, such as Terminal's, with its \
+            permissions. Started as an app (by open, say), ADO Pulse has its own Full Disk Access, so they don't \
+            run. Run \(Bundle.main.executablePath ?? "ADOPulse") from Terminal instead.
+            """
+    }
 
     struct Options {
         var demo = false
@@ -38,11 +57,15 @@ enum CLI {
         }
     }
 
-    /// Returns an exit code for command-line modes, or nil to launch the app.
-    static func run(_ arguments: [String]) -> Int32? {
+    /// Returns an exit code for command-line modes, or nil to launch the app (or, for `--render`, to draw it).
+    static func run(_ arguments: [String], attribution: Attribution = .current) -> Int32? {
         if arguments.contains("--help") || arguments.contains("-h") {
             print(usage)
             return 0
+        }
+        if let refusal = refusal(arguments, attribution: attribution) {
+            FileHandle.standardError.write(Data("\(refusal)\n".utf8))
+            return 1
         }
         let options = Options(arguments)
         if arguments.contains("--json") {

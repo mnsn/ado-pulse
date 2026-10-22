@@ -5,17 +5,29 @@ import SQLite3
 /// hundred per app). ADO Pulse reads it, only when you turn on pull requests sent in chats, to find
 /// links to pull requests in what people send you. It never writes to it.
 public enum NotificationCenterDatabase {
-    /// Points ADO Pulse at another copy of the database, such as a test fixture.
+    /// Points ADO Pulse at another copy of the database, such as a test fixture, while it has the permissions of the
+    /// app that started it (`Attribution.environment`). With its own, such a copy could be one that only Full Disk
+    /// Access reads, as a Time Machine backup's is.
     public static let overrideVariable = "ADO_PULSE_NOTIFICATIONS_DB"
 
-    public static func defaultURL(
-        environment: [String: String] = ProcessInfo.processInfo.environment,
-        home: URL = FileManager.default.homeDirectoryForCurrentUser
-    ) -> URL {
+    public static func defaultURL(environment: [String: String] = Attribution.environment, home: URL = userHome()) -> URL {
         if let path = environment[overrideVariable], !path.isEmpty {
             return URL(fileURLWithPath: (path as NSString).expandingTildeInPath)
         }
         return home.appendingPathComponent("Library/Group Containers/group.com.apple.usernoted/db2/db")
+    }
+
+    /// Your home folder, from the user database. `FileManager`'s follows `CFFIXED_USER_HOME`, which whoever starts
+    /// ADO Pulse can set. If the user database can't say, a folder that holds nothing, so nothing is read.
+    public static func userHome() -> URL {
+        var record = passwd()
+        var result: UnsafeMutablePointer<passwd>?
+        var buffer = [CChar](repeating: 0, count: max(Int(sysconf(_SC_GETPW_R_SIZE_MAX)), 16_384))
+        if getpwuid_r(getuid(), &record, &buffer, buffer.count, &result) == 0, let result, let directory = result.pointee.pw_dir {
+            let path = String(cString: directory)
+            if !path.isEmpty { return URL(fileURLWithPath: path, isDirectory: true) }
+        }
+        return URL(fileURLWithPath: "/var/empty", isDirectory: true)
     }
 
     /// Without these, nothing can be read reliably, so nothing is guessed.

@@ -226,7 +226,8 @@ log show --last 10m --info --predicate 'subsystem == "com.asaf.ADOPulse"' --styl
 ```
 
 Their output includes your pull requests' titles and comments, so remove anything private before
-you share it.
+you share it. Run them from Terminal: started as an app (with `open`, say), ADO Pulse has its own
+Full Disk Access, so it refuses them.
 
 ## Contributing
 

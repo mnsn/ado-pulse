@@ -209,6 +209,40 @@ apps that run commands start them responsible for themselves, and then everythin
 so run from one of them, the first check can't tell the difference. From Terminal, and on GitHub
 Actions, it can.)
 
+## Programs that start ADO Pulse
+
+It works the other way round too. A program that runs ADO Pulse's binary from a shell lends it its
+own permissions: run in Terminal, `--chats` reads Notification Center with Terminal's Full Disk
+Access. But a program that starts ADO Pulse through LaunchServices
+(`open -n -g --stdout out.txt "ADO Pulse.app" --args --chats`), or spawns it with its responsibility
+disclaimed, makes it responsible for itself, and it then has its own Full Disk Access. That program
+chose its arguments, its environment (`open --env`) and argument-domain preferences
+(`--args -key value`), and can read its output. So, when ADO Pulse is attributed to itself
+(`Attribution` in `Sources/ADOPulseCore`):
+
+- No command-line mode runs, and no `--render`, not even with `--demo`. `--help` still does; the
+  others say to run them from Terminal instead. This runs first, before ADO Pulse checks whether
+  it's already running, so it holds either way.
+- It ignores `ADO_PULSE_NOTIFICATIONS_DB`, which could name a copy that only Full Disk Access reads,
+  as a Time Machine backup's is, and it finds Notification Center's database in your home folder as
+  the user database says, so `CFFIXED_USER_HOME` can't move it. `ADO_PULSE_AZ` still applies: `az`
+  runs with its own permissions.
+- Its preferences come only from its own domain: `-key value` arguments would otherwise set them.
+- The app's standard output and error go to `/dev/null`, where frameworks could otherwise write, for
+  instance with `OS_ACTIVITY_DT_MODE` set.
+
+That's how the app always runs once installed, from Finder, a login item or `open`, so it changes
+nothing for it. Run from a shell, nothing changes either.
+
+To tell, ADO Pulse asks macOS who's responsible for it (`responsibility_get_responsible_for_pid`),
+and compares the executable it names with its own: privacy permissions are checked against that
+executable. The process macOS names isn't enough. On macOS 27, a command that the GitHub Copilot
+app's agents run is its own responsible process, yet attributed to the Copilot app, whose
+permissions it gets. Whether macOS names ADO Pulse, or can't say, it counts as ADO Pulse's own
+permissions. Tests give the decision what macOS would say in each case, and run the built app both
+ways: started responsible for itself, `--chats` refuses, and reads neither Notification Center nor a
+copy that `ADO_PULSE_NOTIFICATIONS_DB` names; started plainly, it lists that copy's links.
+
 ## Notifications
 
 After each refresh, ADO Pulse compares the new list with the previous one (`NotificationPlanner`)

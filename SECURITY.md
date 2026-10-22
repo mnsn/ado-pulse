@@ -21,7 +21,8 @@ reporting:
   message's text, or let a notification make it open something other than an Azure DevOps pull
   request or the message it came in,
 - any way a program it starts, or anything that can change one, could use its permissions, such as
-  its Full Disk Access,
+  its Full Disk Access, and any way a program could by starting ADO Pulse itself (with its
+  command-line modes, arguments, environment or output),
 - any way another app or a web page could make it run a command or open a link it shouldn't, and
 - problems with how the build scripts and workflows here build, sign or publish the app.
 
@@ -49,6 +50,20 @@ it (`responsibility_spawnattrs_setdisclaim`, which Chromium and LLDB use too) is
 without it, ADO Pulse starts nothing. Apps, links and files it opens (your browser, Teams, Terminal for
 `az login`) are opened by macOS, which makes each responsible for itself. Tests check that a program it
 starts is responsible for itself, and that nothing else in the app starts programs.
+
+## Programs that start ADO Pulse
+
+Any program running as you can start ADO Pulse itself, through LaunchServices
+(`open -n -g --stdout out.txt "ADO Pulse.app" --args --chats`) or with its responsibility
+disclaimed. ADO Pulse then has its own Full Disk Access, and that program chose its arguments and
+environment, and can read its output. So, started that way, ADO Pulse runs none of its command-line
+modes or `--render` (`--help` still prints), ignores `-key value` arguments that would set its
+preferences and `ADO_PULSE_NOTIFICATIONS_DB`, which could name a copy that only Full Disk Access
+reads, and sends its output to `/dev/null`. It tells by asking macOS which executable it's
+attributed to, and when macOS can't say, it counts as its own permissions. Run from a shell, they
+run with the permissions of the app the shell runs in, such as Terminal's. `ADO_PULSE_AZ` still
+applies: `az` runs with its own permissions. Tests check the decision, and run the built app both
+ways.
 
 ## Supported versions
 

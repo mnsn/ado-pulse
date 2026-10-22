@@ -20,6 +20,10 @@
 - The programs ADO Pulse starts (the Azure CLI, and your login shell when it looks for `az`) are
   responsible for themselves, so they don't get the Full Disk Access you give ADO Pulse: anything
   running as you could change them, or the files they run, and so use it.
+- Nor can a program get ADO Pulse to use it by starting it. Started as an app (by `open`, say), or by
+  a program that disclaimed it, ADO Pulse has its own Full Disk Access, so its command-line modes and
+  `--render` refuse to run, `-key value` arguments don't reach its preferences, it ignores
+  `ADO_PULSE_NOTIFICATIONS_DB`, and its output goes nowhere. Run them from Terminal, as before.
 
 Fixes:
 
