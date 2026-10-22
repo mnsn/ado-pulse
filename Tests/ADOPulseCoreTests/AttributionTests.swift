@@ -100,8 +100,9 @@ import Testing
         }
         let argv = ([executable.path] + arguments).map { strdup($0) } + [nil]
         defer { argv.forEach { free($0) } }
+        let noVariables: [UnsafeMutablePointer<CChar>?] = [nil]
         var pid: pid_t = 0
-        let spawned = posix_spawn(&pid, executable.path, &actions, nil, argv, environ)
+        let spawned = posix_spawn(&pid, executable.path, &actions, nil, argv, noVariables)
         guard spawned == 0 else { throw POSIXError(POSIXErrorCode(rawValue: spawned) ?? .EIO) }
         return pid
     }

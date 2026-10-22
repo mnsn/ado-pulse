@@ -51,11 +51,11 @@ func withPreferences<T>(_ body: (UserDefaults, String) throws -> T) throws -> T 
 
 /// The same, for tests that wait.
 @MainActor
-func withPreferences<T>(_ body: (UserDefaults, String) async throws -> T) async throws -> T {
+func withPreferences(_ body: @MainActor (UserDefaults, String) async throws -> Void) async throws {
     let suite = "ADOPulseTests.\(UUID().uuidString)"
     guard let defaults = UserDefaults(suiteName: suite) else { throw CocoaError(.featureUnsupported) }
     defer { defaults.removePersistentDomain(forName: suite) }
-    return try await body(defaults, suite)
+    try await body(defaults, suite)
 }
 
 /// Everything a preferences suite holds, as text: what any program running as you could read there.
